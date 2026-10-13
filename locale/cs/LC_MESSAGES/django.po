@@ -1,0 +1,344 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-13 15:41+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: cs\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=4; plural=(n == 1 && n % 1 == 0) ? 0 : (n >= 2 && n "
+"<= 4 && n % 1 == 0) ? 1: (n % 1 != 0 ) ? 2 : 3;\n"
+
+#: accounts/admin_views.py:123
+msgid "You cannot delete your own account."
+msgstr "Nemůžete smazat svůj vlastní účet."
+
+#: accounts/serializers.py:31
+msgid "Incorrect password."
+msgstr "Nesprávné heslo."
+
+#: accounts/serializers.py:53
+msgid "The password setup link is invalid."
+msgstr "Odkaz pro nastavení hesla je neplatný."
+
+#: accounts/serializers.py:56
+msgid "The password setup link is invalid or has expired."
+msgstr "Odkaz pro nastavení hesla je neplatný nebo prošlý."
+
+#: accounts/views.py:87
+msgid "Incorrect email or password."
+msgstr "Nesprávný e-mail nebo heslo."
+
+#: catalog/admin_motif_serializers.py:54
+msgid "This slug already exists."
+msgstr "Tento slug už existuje."
+
+#: catalog/admin_motif_views.py:157
+msgid ""
+"This motif is used in an order and cannot be deleted - try deactivating it "
+"instead."
+msgstr "Motiv je použitý v objednávce a nelze ho smazat - zkuste ho deaktivovat."
+
+#: catalog/admin_motif_views.py:194
+msgid "Allowed types are JPG, PNG and WEBP."
+msgstr "Povolené typy jsou JPG, PNG a WEBP."
+
+#: catalog/admin_motif_views.py:254 catalog/admin_motif_views.py:353
+#: core/admin_lookup.py:123
+#, python-format
+msgid "Unknown ids: %(ids)s."
+msgstr "Neznámá id: %(ids)s."
+
+#: catalog/admin_motif_views.py:299 catalog/admin_motif_views.py:322
+msgid "Image not found."
+msgstr "Obrázek nenalezen."
+
+#: catalog/admin_serializers.py:25
+msgid "This slug already exists, pick a different name or slug."
+msgstr "Tento slug už existuje, zadejte jiný název nebo slug."
+
+#: catalog/admin_serializers.py:36
+msgid "The color must be in #RRGGBB format."
+msgstr "Barva musí být ve formátu #RRGGBB."
+
+#: catalog/admin_serializers.py:69 catalog/admin_serializers.py:71
+msgid "The dimension must be positive."
+msgstr "Rozměr musí být kladný."
+
+#: catalog/admin_serializers.py:80
+msgid "A print area with this name already exists for this product type."
+msgstr "Tiskový blok s tímto názvem už u tohoto typu oblečení existuje."
+
+#: catalog/models/category.py:13
+msgid "category"
+msgstr "kategorie"
+
+#: catalog/models/category.py:14
+msgid "categories"
+msgstr "kategorie"
+
+#: catalog/models/color.py:12
+msgid "color"
+msgstr "barva"
+
+#: catalog/models/color.py:13
+msgid "colors"
+msgstr "barvy"
+
+#: catalog/models/cut.py:11
+msgid "cut"
+msgstr "střih"
+
+#: catalog/models/cut.py:12
+msgid "cuts"
+msgstr "střihy"
+
+#: catalog/models/print_area.py:22
+msgid "print area"
+msgstr "tiskový blok"
+
+#: catalog/models/print_area.py:23
+msgid "print areas"
+msgstr "tiskové bloky"
+
+#: catalog/models/product_type.py:11
+msgid "product type"
+msgstr "typ oblečení"
+
+#: catalog/models/product_type.py:12
+msgid "product types"
+msgstr "typy oblečení"
+
+#: core/admin_lookup.py:110
+#, python-format
+msgid ""
+"This record (%(name)s) is in use and cannot be deleted - try deactivating it "
+"instead."
+msgstr "Tento záznam (%(name)s) je používaný a nelze ho smazat - zkuste ho deaktivovat."
+
+#: core/exceptions.py:17
+msgid "The request violates a business rule."
+msgstr "Požadavek porušuje obchodní pravidlo."
+
+#: core/exceptions.py:27
+msgid ""
+"The order can only be changed through its allowed actions in this state."
+msgstr "Objednávku lze v tomto stavu upravovat jen přes povolené akce."
+
+#: core/exceptions.py:33
+msgid "This status transition is not allowed."
+msgstr "Tento přechod stavu není povolen."
+
+#: core/exceptions.py:39
+msgid "This record is in use and cannot be deleted."
+msgstr "Záznam je používaný a nelze ho smazat."
+
+#: core/exceptions.py:45
+msgid "This e-mail is already in use."
+msgstr "E-mail je již použitý."
+
+#: core/exceptions.py:51
+msgid "The last admin cannot have their role removed or be deleted."
+msgstr "Poslednímu administrátorovi nelze odebrat roli ani ho smazat."
+
+#: core/exceptions.py:57
+msgid "The file link is invalid or has expired."
+msgstr "Odkaz na soubor je neplatný nebo prošlý."
+
+#: core/exceptions.py:63
+msgid "The file is too large."
+msgstr "Soubor je příliš velký."
+
+#: core/exceptions.py:69
+msgid "Unsupported file type."
+msgstr "Nepodporovaný typ souboru."
+
+#: core/exceptions.py:135
+msgid "An unexpected error occurred."
+msgstr "Nastala neočekávaná chyba."
+
+#: core/exceptions.py:143
+msgid "The submitted data did not pass validation."
+msgstr "Zadané údaje neprošly validací."
+
+#: core/tokens.py:28
+msgid "The file link has expired, please upload the file again."
+msgstr "Odkaz na soubor už prošel, nahrajte prosím soubor znovu."
+
+#: customers/admin_views.py:118
+msgid "Only the ADMIN role may change the e-mail address."
+msgstr "Změnu e-mailu může provést jen role ADMIN."
+
+#: orders/admin_views.py:280 orders/admin_views.py:317
+#: orders/admin_views.py:370
+msgid "Item not found."
+msgstr "Položka nenalezena."
+
+#: orders/admin_views.py:320 orders/admin_views.py:373
+msgid "Placement not found."
+msgstr "Umístění nenalezeno."
+
+#: orders/admin_views.py:334 orders/services.py:149
+msgid "The print area belongs to a different product type than the item."
+msgstr "Tiskový blok patří k jinému typu oblečení, než má položka."
+
+#: orders/admin_views.py:473
+msgid "Unknown order status."
+msgstr "Neznámý stav objednávky."
+
+#: orders/admin_views.py:505
+msgid "Unknown payment status."
+msgstr "Neznámý stav platby."
+
+#: orders/admin_views.py:528
+msgid "Unknown shipment status."
+msgstr "Neznámý stav zásilky."
+
+#: orders/serializers.py:35
+msgid "The company ID (IČO) must have 8 digits."
+msgstr "IČO musí mít 8 číslic."
+
+#: orders/serializers.py:37
+msgid "A company with an IČO must have a name."
+msgstr "Firma s IČO musí mít vyplněný název."
+
+#: orders/serializers.py:41
+msgid "The postal code must have 5 digits."
+msgstr "PSČ musí mít 5 číslic."
+
+#: orders/serializers.py:67
+msgid "A pickup point requires both pickupPointId and pickupPointName."
+msgstr "Výdejní místo vyžaduje pickupPointId i pickupPointName."
+
+#: orders/serializers.py:153
+msgid "You must accept the terms and conditions."
+msgstr "Musíte odsouhlasit obchodní podmínky."
+
+#: orders/serializers.py:155
+msgid "The order must have at least one item."
+msgstr "Objednávka musí mít aspoň jednu položku."
+
+#: orders/serializers.py:173
+#, python-format
+msgid "Missing required shipping address fields: %(fields)s."
+msgstr "Chybí povinná pole doručovací adresy: %(fields)s."
+
+#: orders/services.py:88
+#, python-format
+msgid "%(label)s is not active."
+msgstr "%(label)s není aktivní."
+
+#: orders/services.py:92
+msgid "Custom print"
+msgstr "Vlastní potisk"
+
+#: orders/services.py:98
+msgid "Placement dimensions must be positive."
+msgstr "Rozměry umístění musí být kladné."
+
+#: orders/services.py:100
+msgid "Placement must not start outside the print area."
+msgstr "Umístění nesmí začínat mimo tiskový blok."
+
+#: orders/services.py:102
+msgid "Placement exceeds the print area dimensions."
+msgstr "Umístění přesahuje rozměr tiskového bloku."
+
+#: orders/services.py:123 orders/services.py:299
+#, python-format
+msgid "Quantity must be between 1 and %(max)s."
+msgstr "Množství musí být mezi 1 a %(max)s."
+
+#: orders/services.py:129
+msgid "A custom item cannot have a catalog motif assigned."
+msgstr "Vlastní položka nesmí mít přiřazený katalogový motiv."
+
+#: orders/services.py:132
+msgid "A custom item must have at least one design placement."
+msgstr "Vlastní položka musí mít aspoň jedno umístění potisku."
+
+#: orders/services.py:136
+msgid "A catalog item must have a motif assigned."
+msgstr "Katalogová položka musí mít přiřazený motiv."
+
+#: orders/services.py:137
+msgid "Motif"
+msgstr "Motiv"
+
+#: orders/services.py:139
+msgid "A catalog item cannot have design placements."
+msgstr "Katalogová položka nesmí mít umístění potisku."
+
+#: orders/services.py:141
+msgid "Product type"
+msgstr "Typ oblečení"
+
+#: orders/services.py:142
+msgid "Cut"
+msgstr "Střih"
+
+#: orders/services.py:143
+msgid "Color"
+msgstr "Barva"
+
+#: orders/services.py:324
+msgid "The order does not have a total price set."
+msgstr "Objednávka nemá stanovenou celkovou cenu."
+
+#: orders/services.py:368
+msgid "All items must have a price set."
+msgstr "Všechny položky musí mít stanovenou cenu."
+
+#: orders/services.py:374
+msgid "The total price must be set."
+msgstr "Celková cena musí být stanovena."
+
+#: orders/services.py:379
+msgid "The order must have a total price and must be confirmed by an admin."
+msgstr "Objednávka musí mít stanovenou cenu a musí být potvrzená adminem."
+
+#: orders/services.py:384
+msgid "A carrier and delivery type must be set."
+msgstr "Musí být vyplněný dopravce a typ doručení."
+
+#: orders/services.py:433
+#, python-format
+msgid "Transition from status %(source)s to %(target)s is not allowed."
+msgstr "Přechod ze stavu %(source)s do stavu %(target)s není povolen."
+
+#: orders/services.py:437
+msgid "Only the ADMIN role may perform this action."
+msgstr "Tuto akci může provést jen role ADMIN."
+
+#: orders/services.py:439
+msgid "The transition condition was not met."
+msgstr "Podmínka přechodu nebyla splněna."
+
+#: orders/views.py:204
+msgid "This field is required."
+msgstr "Soubor je povinný."
+
+#: orders/views.py:211
+msgid "Allowed types are PNG, JPG, SVG and PDF."
+msgstr "Povolené typy jsou PNG, JPG, SVG a PDF."
+
+#: orders/views.py:278 orders/views.py:315 orders/views.py:319
+msgid "Order not found."
+msgstr "Objednávka nebyla nalezena."
+
+#: shipping/models.py:15
+msgid "carrier"
+msgstr "dopravce"
+
+#: shipping/models.py:16
+msgid "carriers"
+msgstr "dopravci"

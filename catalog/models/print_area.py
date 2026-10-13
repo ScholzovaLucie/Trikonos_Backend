@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils.translation import gettext_lazy as _
 
 from core.models import SimpleLookup
 from .product_type import ProductType
@@ -18,6 +19,8 @@ class PrintArea(SimpleLookup):
 
     class Meta(SimpleLookup.Meta):
         db_table = 'print_areas'
+        verbose_name = _('print area')
+        verbose_name_plural = _('print areas')
         constraints = [
             models.UniqueConstraint(fields=['product_type', 'name'], name='uq_print_area_product_type_name'),
             models.CheckConstraint(condition=models.Q(width_mm__gt=0), name='print_area_width_positive'),

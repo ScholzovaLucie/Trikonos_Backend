@@ -1,4 +1,5 @@
 from django.core import signing
+from django.utils.translation import gettext as _
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import generics, serializers, status
 from rest_framework.exceptions import NotFound
@@ -200,14 +201,14 @@ class DesignUploadView(APIView):
     def post(self, request):
         uploaded = request.data.get('file')
         if uploaded is None:
-            raise serializers.ValidationError({'file': 'Soubor je povinný.'})
+            raise serializers.ValidationError({'file': _('This field is required.')})
         if uploaded.size > self.MAX_SIZE:
             raise FileTooLargeError()
 
         data = uploaded.read()
         kind = detect_kind(data)
         if kind not in self.ALLOWED_KINDS:
-            raise UnsupportedFileTypeError('Povolené typy jsou PNG, JPG, SVG a PDF.')
+            raise UnsupportedFileTypeError(_('Allowed types are PNG, JPG, SVG and PDF.'))
         if kind == SVG:
             data = sanitize_svg(data)
 
@@ -274,7 +275,7 @@ class OrderLookupView(APIView):
             customer__email__iexact=serializer.validated_data['email'],
         ).first()
         if order is None:
-            raise NotFound('Objednávka nebyla nalezena.')
+            raise NotFound(_('Order not found.'))
 
         access_token = sign_order_access_token(order.id)
         response_serializer = OrderCustomerDetailSerializer(order, context={'access_token': access_token})
@@ -311,11 +312,11 @@ class OrderAccessView(APIView):
         try:
             order_id = resolve_order_access_token(access_token)
         except signing.BadSignature:
-            raise NotFound('Objednávka nebyla nalezena.')
+            raise NotFound(_('Order not found.'))
 
         order = _order_queryset().filter(id=order_id).first()
         if order is None:
-            raise NotFound('Objednávka nebyla nalezena.')
+            raise NotFound(_('Order not found.'))
 
         response_serializer = OrderCustomerDetailSerializer(order, context={'access_token': access_token})
         return Response(response_serializer.data)

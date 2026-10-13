@@ -2,6 +2,7 @@ import csv
 
 from django.db.models import Count, Max, Q, Sum
 from django.http import HttpResponse
+from django.utils.translation import gettext as _
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 from rest_framework import exceptions as drf_exceptions
 from rest_framework import viewsets
@@ -114,7 +115,7 @@ class AdminCustomerViewSet(viewsets.ModelViewSet):
 
         if 'email' in data:
             if request.user.role != StaffRole.ADMIN:
-                raise drf_exceptions.PermissionDenied('Změnu e-mailu může provést jen role ADMIN.')
+                raise drf_exceptions.PermissionDenied(_('Only the ADMIN role may change the e-mail address.'))
             new_email = data['email'].strip().lower()
             if Customer.objects.exclude(pk=customer.pk).filter(email__iexact=new_email).exists():
                 raise EmailTakenError()

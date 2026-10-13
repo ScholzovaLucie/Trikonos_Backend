@@ -3,6 +3,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
+from django.utils.translation import gettext as _
 from rest_framework import serializers
 
 from .models import User
@@ -27,7 +28,7 @@ class ChangePasswordSerializer(serializers.Serializer):
     def validate(self, attrs):
         user = self.context['request'].user
         if not user.check_password(attrs['current_password']):
-            raise serializers.ValidationError({'current_password': 'Nesprávné heslo.'})
+            raise serializers.ValidationError({'current_password': _('Incorrect password.')})
         try:
             validate_password(attrs['new_password'], user=user)
         except DjangoValidationError as exc:
@@ -49,10 +50,10 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
             user_id = force_str(urlsafe_base64_decode(attrs['uid']))
             user = User.objects.get(pk=user_id)
         except (User.DoesNotExist, ValueError, TypeError, OverflowError):
-            raise serializers.ValidationError('Odkaz pro nastavení hesla je neplatný.')
+            raise serializers.ValidationError(_('The password setup link is invalid.'))
 
         if not default_token_generator.check_token(user, attrs['token']):
-            raise serializers.ValidationError('Odkaz pro nastavení hesla je neplatný nebo prošlý.')
+            raise serializers.ValidationError(_('The password setup link is invalid or has expired.'))
 
         try:
             validate_password(attrs['new_password'], user=user)

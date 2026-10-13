@@ -3,6 +3,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.middleware.csrf import get_token
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+from django.utils.translation import gettext as _
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import exceptions as drf_exceptions
 from rest_framework import status
@@ -83,7 +84,7 @@ class LoginView(APIView):
         )
         if user is None or not user.is_active:
             # Same message either way - never reveal which part was wrong.
-            raise drf_exceptions.AuthenticationFailed('Nesprávný e-mail nebo heslo.')
+            raise drf_exceptions.AuthenticationFailed(_('Incorrect email or password.'))
 
         login(request, user)
         return Response(MeSerializer(user).data)

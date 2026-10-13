@@ -1,6 +1,7 @@
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+from django.utils.translation import gettext as _
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import status, viewsets
 from rest_framework.exceptions import PermissionDenied
@@ -119,7 +120,7 @@ class AdminUserViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         user = self.get_object()
         if user.pk == request.user.pk:
-            raise PermissionDenied('Nemůžete smazat svůj vlastní účet.')
+            raise PermissionDenied(_('You cannot delete your own account.'))
         if user.role == StaffRole.ADMIN and not _has_other_active_admin(exclude=user):
             raise LastAdminError()
         return super().destroy(request, *args, **kwargs)

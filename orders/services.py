@@ -7,6 +7,8 @@ from typing import Callable, Optional
 
 from django.db import connection, transaction
 from django.utils import timezone
+from django.utils.translation import gettext as _
+from django.utils.translation import gettext_lazy
 from rest_framework import exceptions as drf_exceptions
 
 from core.exceptions import BusinessError, InvalidStatusTransitionError, OrderLockedError
@@ -83,21 +85,21 @@ def get_or_create_customer(data):
 
 def _require_active(instance, label):
     if not instance.is_active:
-        raise BusinessError(f'{label} není aktivní.', code='INACTIVE_REFERENCE')
+        raise BusinessError(_('%(label)s is not active.') % {'label': label}, code='INACTIVE_REFERENCE')
 
 
 def build_item_label(is_custom, motif, product_type, cut, color, size):
-    first = 'Vlastní potisk' if is_custom else motif.name
+    first = _('Custom print') if is_custom else motif.name
     return f'{first} / {product_type.name} / {cut.name} / {color.name} / {size}'
 
 
 def validate_placement_bounds(print_area, x, y, width, height):
     if width <= 0 or height <= 0:
-        raise BusinessError('Rozměry umístění musí být kladné.', code='INVALID_PLACEMENT_SIZE')
+        raise BusinessError(_('Placement dimensions must be positive.'), code='INVALID_PLACEMENT_SIZE')
     if x < 0 or y < 0:
-        raise BusinessError('Umístění nesmí začínat mimo tiskový blok.', code='INVALID_PLACEMENT_POSITION')
+        raise BusinessError(_('Placement must not start outside the print area.'), code='INVALID_PLACEMENT_POSITION')
     if x + width > print_area.width_mm or y + height > print_area.height_mm:
-        raise BusinessError('Umístění přesahuje rozměr tiskového bloku.', code='PLACEMENT_OUT_OF_BOUNDS')
+        raise BusinessError(_('Placement exceeds the print area dimensions.'), code='PLACEMENT_OUT_OF_BOUNDS')
 
 
 def _validate_and_price_item(item_data):
@@ -117,29 +119,34 @@ def _validate_and_price_item(item_data):
     placements = item_data.get('placements') or []
 
     if not (1 <= quantity <= MAX_ITEM_QUANTITY):
-        raise BusinessError(f'Množství musí být mezi 1 a {MAX_ITEM_QUANTITY}.', code='QUANTITY_OUT_OF_RANGE')
+        raise BusinessError(
+            _('Quantity must be between 1 and %(max)s.') % {'max': MAX_ITEM_QUANTITY},
+            code='QUANTITY_OUT_OF_RANGE',
+        )
 
     if is_custom:
         if motif is not None:
-            raise BusinessError('Vlastní položka nesmí mít přiřazený katalogový motiv.', code='CUSTOM_WITH_MOTIF')
+            raise BusinessError(_('A custom item cannot have a catalog motif assigned.'), code='CUSTOM_WITH_MOTIF')
         if not placements:
-            raise BusinessError('Vlastní položka musí mít aspoň jedno umístění potisku.', code='CUSTOM_WITHOUT_PLACEMENT')
+            raise BusinessError(
+                _('A custom item must have at least one design placement.'), code='CUSTOM_WITHOUT_PLACEMENT',
+            )
     else:
         if motif is None:
-            raise BusinessError('Katalogová položka musí mít přiřazený motiv.', code='CATALOG_WITHOUT_MOTIF')
-        _require_active(motif, 'Motiv')
+            raise BusinessError(_('A catalog item must have a motif assigned.'), code='CATALOG_WITHOUT_MOTIF')
+        _require_active(motif, _('Motif'))
         if placements:
-            raise BusinessError('Katalogová položka nesmí mít umístění potisku.', code='CATALOG_WITH_PLACEMENT')
+            raise BusinessError(_('A catalog item cannot have design placements.'), code='CATALOG_WITH_PLACEMENT')
 
-    _require_active(product_type, 'Typ oblečení')
-    _require_active(cut, 'Střih')
-    _require_active(color, 'Barva')
+    _require_active(product_type, _('Product type'))
+    _require_active(cut, _('Cut'))
+    _require_active(color, _('Color'))
 
     for placement in placements:
         print_area = placement['print_area']
         if print_area.product_type_id != product_type.id:
             raise BusinessError(
-                'Tiskový blok patří k jinému typu oblečení, než má položka.',
+                _('The print area belongs to a different product type than the item.'),
                 code='PRINT_AREA_PRODUCT_TYPE_MISMATCH',
             )
         validate_placement_bounds(
@@ -288,7 +295,10 @@ def update_item_pricing(order, item, *, unit_price=UNSET, quantity=UNSET):
         item.unit_price = unit_price
     if quantity is not UNSET:
         if not (1 <= quantity <= MAX_ITEM_QUANTITY):
-            raise BusinessError(f'Množství musí být mezi 1 a {MAX_ITEM_QUANTITY}.', code='QUANTITY_OUT_OF_RANGE')
+            raise BusinessError(
+                _('Quantity must be between 1 and %(max)s.') % {'max': MAX_ITEM_QUANTITY},
+                code='QUANTITY_OUT_OF_RANGE',
+            )
         item.quantity = quantity
     item.save()
     recalculate_totals(order)
@@ -311,7 +321,7 @@ def confirm_order(order):
     gets set once but is re-saved to keep `updated_at` honest.
     """
     if order.total is None:
-        raise BusinessError('Objednávka nemá stanovenou celkovou cenu.', code='ORDER_NOT_PRICED')
+        raise BusinessError(_('The order does not have a total price set.'), code='ORDER_NOT_PRICED')
     if order.status == OrderStatus.QUOTE_REQUESTED:
         order.status = OrderStatus.NEW
     order.confirmed_at = order.confirmed_at or timezone.now()
@@ -349,26 +359,29 @@ def _carrier_and_delivery_set(order):
     return order.carrier_id is not None and bool(order.delivery_type)
 
 
+# condition_message values are built once at module import time, so they use
+# gettext_lazy (resolved on access/str(), not at import time) rather than the
+# eager gettext used everywhere else in this module.
 TRANSITIONS = [
     StatusTransition(
         OrderStatus.QUOTE_REQUESTED, OrderStatus.NEW,
-        condition=_all_items_priced, condition_message='Všechny položky musí mít stanovenou cenu.',
+        condition=_all_items_priced, condition_message=gettext_lazy('All items must have a price set.'),
     ),
     StatusTransition(OrderStatus.QUOTE_REQUESTED, OrderStatus.CANCELLED),
     StatusTransition(OrderStatus.NEW, OrderStatus.CANCELLED),
     StatusTransition(
         OrderStatus.NEW, OrderStatus.PAID,
-        condition=_total_is_set, condition_message='Celková cena musí být stanovena.',
+        condition=_total_is_set, condition_message=gettext_lazy('The total price must be set.'),
     ),
     StatusTransition(
         OrderStatus.NEW, OrderStatus.PROCESSING,
         condition=_confirmed_and_priced,
-        condition_message='Objednávka musí mít stanovenou cenu a musí být potvrzená adminem.',
+        condition_message=gettext_lazy('The order must have a total price and must be confirmed by an admin.'),
     ),
     StatusTransition(OrderStatus.PAID, OrderStatus.PROCESSING),
     StatusTransition(
         OrderStatus.PROCESSING, OrderStatus.SHIPPED,
-        condition=_carrier_and_delivery_set, condition_message='Musí být vyplněný dopravce a typ doručení.',
+        condition=_carrier_and_delivery_set, condition_message=gettext_lazy('A carrier and delivery type must be set.'),
     ),
     StatusTransition(OrderStatus.PROCESSING, OrderStatus.CANCELLED, admin_only=True),
     StatusTransition(OrderStatus.SHIPPED, OrderStatus.DELIVERED),
@@ -417,12 +430,13 @@ def transition_order_status(order, target_status, *, is_admin):
     transition = _TRANSITIONS_BY_PAIR.get((order.status, target_status))
     if transition is None:
         raise InvalidStatusTransitionError(
-            f'Přechod ze stavu {order.status} do stavu {target_status} není povolen.'
+            _('Transition from status %(source)s to %(target)s is not allowed.')
+            % {'source': order.status, 'target': target_status}
         )
     if transition.admin_only and not is_admin:
-        raise drf_exceptions.PermissionDenied('Tuto akci může provést jen role ADMIN.')
+        raise drf_exceptions.PermissionDenied(_('Only the ADMIN role may perform this action.'))
     if transition.condition and not transition.condition(order):
-        raise InvalidStatusTransitionError(transition.condition_message or 'Podmínka přechodu nebyla splněna.')
+        raise InvalidStatusTransitionError(transition.condition_message or _('The transition condition was not met.'))
 
     resulting_status = target_status
     # Cash on delivery never sits in PAID - it goes straight to PROCESSING.

@@ -3,6 +3,7 @@ product types, print areas, carriers) - one base ModelViewSet instead of six
 near-identical ones. Subclasses set queryset/serializer_class/search_fields.
 """
 from django.db.models import ProtectedError, Q
+from django.utils.translation import gettext as _
 from drf_spectacular.utils import OpenApiResponse, extend_schema, extend_schema_view
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
@@ -106,7 +107,8 @@ class LookupAdminViewSet(viewsets.ModelViewSet):
             instance.delete()
         except ProtectedError:
             raise InUseError(
-                f'{instance._meta.verbose_name} je používaný a nelze ho smazat - zkuste ho deaktivovat.'
+                _('This record (%(name)s) is in use and cannot be deleted - try deactivating it instead.')
+                % {'name': instance._meta.verbose_name}
             )
 
     @action(detail=False, methods=['post'])
@@ -118,7 +120,7 @@ class LookupAdminViewSet(viewsets.ModelViewSet):
         objects_by_id = {str(obj.pk): obj for obj in self.get_queryset().filter(pk__in=ids)}
         missing = [value for value in ids if value not in objects_by_id]
         if missing:
-            raise serializers.ValidationError({'ids': f'Neznámá id: {", ".join(missing)}.'})
+            raise serializers.ValidationError({'ids': _('Unknown ids: %(ids)s.') % {'ids': ", ".join(missing)}})
 
         for index, object_id in enumerate(ids):
             instance = objects_by_id[object_id]

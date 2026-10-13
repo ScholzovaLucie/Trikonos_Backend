@@ -225,8 +225,14 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
+# Source strings in code are English; LANGUAGE_CODE='cs' + locale/cs/LC_MESSAGES
+# translates them (and Django's/DRF's own built-in messages) to Czech at
+# runtime - no LocaleMiddleware, since this API is Czech-only, not per-request
+# multi-language.
 
 LANGUAGE_CODE = 'cs'
+
+LOCALE_PATHS = [BASE_DIR / 'locale']
 
 TIME_ZONE = 'UTC'
 

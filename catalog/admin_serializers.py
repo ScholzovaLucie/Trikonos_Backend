@@ -1,6 +1,7 @@
 import re
 
 from django.utils.text import slugify
+from django.utils.translation import gettext as _
 from rest_framework import serializers
 
 from .models import Category, Color, Cut, PrintArea, ProductType
@@ -21,7 +22,7 @@ class AdminCategorySerializer(serializers.ModelSerializer):
         if self.instance:
             queryset = queryset.exclude(pk=self.instance.pk)
         if queryset.exists():
-            raise serializers.ValidationError({'slug': 'Tento slug už existuje, zadejte jiný název nebo slug.'})
+            raise serializers.ValidationError({'slug': _('This slug already exists, pick a different name or slug.')})
         return attrs
 
 
@@ -32,7 +33,7 @@ class AdminColorSerializer(serializers.ModelSerializer):
 
     def validate_hex_value(self, value):
         if not re.fullmatch(r'#[0-9A-Fa-f]{6}', value):
-            raise serializers.ValidationError('Barva musí být ve formátu #RRGGBB.')
+            raise serializers.ValidationError(_('The color must be in #RRGGBB format.'))
         return value.upper()
 
 
@@ -65,9 +66,9 @@ class AdminPrintAreaSerializer(serializers.ModelSerializer):
         width = attrs.get('width_mm', getattr(self.instance, 'width_mm', None))
         height = attrs.get('height_mm', getattr(self.instance, 'height_mm', None))
         if width is not None and width <= 0:
-            raise serializers.ValidationError({'width_mm': 'Rozměr musí být kladný.'})
+            raise serializers.ValidationError({'width_mm': _('The dimension must be positive.')})
         if height is not None and height <= 0:
-            raise serializers.ValidationError({'height_mm': 'Rozměr musí být kladný.'})
+            raise serializers.ValidationError({'height_mm': _('The dimension must be positive.')})
 
         product_type = attrs.get('product_type', getattr(self.instance, 'product_type', None))
         name = attrs.get('name', getattr(self.instance, 'name', None))
@@ -76,6 +77,6 @@ class AdminPrintAreaSerializer(serializers.ModelSerializer):
             queryset = queryset.exclude(pk=self.instance.pk)
         if queryset.exists():
             raise serializers.ValidationError({
-                'name': 'Tiskový blok s tímto názvem už u tohoto typu oblečení existuje.',
+                'name': _('A print area with this name already exists for this product type.'),
             })
         return attrs

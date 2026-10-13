@@ -1,5 +1,6 @@
 from django.db import transaction
 from django.db.models import BooleanField, Case, Count, Q, When
+from django.utils.translation import gettext as _
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
@@ -276,7 +277,7 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         order = self.get_object()
         item = order.items.filter(id=item_id).first()
         if item is None:
-            raise NotFound('Položka nenalezena.')
+            raise NotFound(_('Item not found.'))
 
         serializer = AdminOrderItemPriceSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -313,10 +314,10 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         services.ensure_order_editable(order)
         item = order.items.filter(id=item_id).first()
         if item is None:
-            raise NotFound('Položka nenalezena.')
+            raise NotFound(_('Item not found.'))
         placement = item.design_placements.filter(id=placement_id).first()
         if placement is None:
-            raise NotFound('Umístění nenalezeno.')
+            raise NotFound(_('Placement not found.'))
 
         serializer = AdminPlacementUpdateSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -330,7 +331,7 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
 
         if print_area.product_type_id != item.product_type_id:
             raise services.BusinessError(
-                'Tiskový blok patří k jinému typu oblečení, než má položka.',
+                _('The print area belongs to a different product type than the item.'),
                 code='PRINT_AREA_PRODUCT_TYPE_MISMATCH',
             )
         services.validate_placement_bounds(print_area, x, y, width, height)
@@ -366,10 +367,10 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         order = self.get_object()
         item = order.items.filter(id=item_id).first()
         if item is None:
-            raise NotFound('Položka nenalezena.')
+            raise NotFound(_('Item not found.'))
         placement = item.design_placements.filter(id=placement_id).first()
         if placement is None:
-            raise NotFound('Umístění nenalezeno.')
+            raise NotFound(_('Placement not found.'))
         # Local/dev storage serves files directly; swap for an attachment
         # proxy response if/when file storage moves behind a private bucket.
         return HttpResponseRedirect(placement.url)
@@ -469,7 +470,7 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         target_status = serializer.validated_data['status']
         if target_status not in OrderStatus.values:
-            raise serializers.ValidationError({'status': 'Neznámý stav objednávky.'})
+            raise serializers.ValidationError({'status': _('Unknown order status.')})
 
         with transaction.atomic():
             services.transition_order_status(order, target_status, is_admin=self._is_admin_role())
@@ -501,7 +502,7 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         value = serializer.validated_data['payment_status']
         if value not in PaymentStatus.values:
-            raise serializers.ValidationError({'payment_status': 'Neznámý stav platby.'})
+            raise serializers.ValidationError({'payment_status': _('Unknown payment status.')})
         order.payment_status = value
         order.save(update_fields=['payment_status', 'updated_at'])
         return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
@@ -524,7 +525,7 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         value = serializer.validated_data['shipment_status']
         if value not in ShipmentStatus.values:
-            raise serializers.ValidationError({'shipment_status': 'Neznámý stav zásilky.'})
+            raise serializers.ValidationError({'shipment_status': _('Unknown shipment status.')})
         order.shipment_status = value
         if 'tracking_number' in serializer.validated_data:
             order.tracking_number = serializer.validated_data['tracking_number']

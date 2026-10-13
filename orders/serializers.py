@@ -1,4 +1,5 @@
 from drf_spectacular.utils import extend_schema_field
+from django.utils.translation import gettext as _
 from rest_framework import serializers
 
 from catalog.models import Color, Cut, Motif, PrintArea, ProductType
@@ -31,13 +32,13 @@ class BillingInputSerializer(serializers.Serializer):
     def validate(self, attrs):
         ico = (attrs.get('ico') or '').strip()
         if ico and (not ico.isdigit() or len(ico) != 8):
-            raise serializers.ValidationError({'ico': 'IČO musí mít 8 číslic.'})
+            raise serializers.ValidationError({'ico': _('The company ID (IČO) must have 8 digits.')})
         if ico and not (attrs.get('company_name') or '').strip():
-            raise serializers.ValidationError({'company_name': 'Firma s IČO musí mít vyplněný název.'})
+            raise serializers.ValidationError({'company_name': _('A company with an IČO must have a name.')})
         if attrs.get('country') == 'CZ':
             zip_code = (attrs.get('zip') or '').replace(' ', '')
             if not (zip_code.isdigit() and len(zip_code) == 5):
-                raise serializers.ValidationError({'zip': 'PSČ musí mít 5 číslic.'})
+                raise serializers.ValidationError({'zip': _('The postal code must have 5 digits.')})
         return attrs
 
 
@@ -63,7 +64,7 @@ class DeliveryInputSerializer(serializers.Serializer):
         if attrs['delivery_type'] == DeliveryType.PICKUP_POINT:
             if not attrs.get('pickup_point_id') or not attrs.get('pickup_point_name'):
                 raise serializers.ValidationError(
-                    'Výdejní místo vyžaduje pickupPointId i pickupPointName.'
+                    _('A pickup point requires both pickupPointId and pickupPointName.')
                 )
         return attrs
 
@@ -149,9 +150,9 @@ class OrderCreateSerializer(serializers.Serializer):
         is_admin = self.context.get('is_admin', False)
 
         if not is_admin and not attrs.get('terms_accepted'):
-            raise serializers.ValidationError({'terms_accepted': 'Musíte odsouhlasit obchodní podmínky.'})
+            raise serializers.ValidationError({'terms_accepted': _('You must accept the terms and conditions.')})
         if not attrs['items']:
-            raise serializers.ValidationError({'items': 'Objednávka musí mít aspoň jednu položku.'})
+            raise serializers.ValidationError({'items': _('The order must have at least one item.')})
 
         billing = attrs['billing']
         shipping = attrs['shipping']
@@ -169,7 +170,7 @@ class OrderCreateSerializer(serializers.Serializer):
             missing = [field for field in required if not shipping.get(field)]
             if missing:
                 raise serializers.ValidationError({
-                    'shipping': f'Chybí povinná pole doručovací adresy: {", ".join(missing)}.',
+                    'shipping': _('Missing required shipping address fields: %(fields)s.') % {'fields': ", ".join(missing)},
                 })
             attrs['_shipping_resolved'] = {
                 'shipping_full_name': shipping['full_name'],

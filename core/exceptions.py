@@ -1,5 +1,6 @@
 import logging
 
+from django.utils.translation import gettext_lazy as _
 from rest_framework import exceptions as drf_exceptions
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
@@ -13,7 +14,7 @@ class BusinessError(drf_exceptions.APIException):
     """
     status_code = 422
     default_code = 'BUSINESS_RULE_VIOLATION'
-    default_detail = 'Požadavek porušuje obchodní pravidlo.'
+    default_detail = _('The request violates a business rule.')
 
     def __init__(self, detail=None, code=None):
         self.code = code or self.default_code
@@ -23,49 +24,49 @@ class BusinessError(drf_exceptions.APIException):
 class OrderLockedError(BusinessError):
     status_code = 409
     default_code = 'ORDER_LOCKED'
-    default_detail = 'Objednávku lze v tomto stavu upravovat jen přes povolené akce.'
+    default_detail = _('The order can only be changed through its allowed actions in this state.')
 
 
 class InvalidStatusTransitionError(BusinessError):
     status_code = 409
     default_code = 'INVALID_STATUS_TRANSITION'
-    default_detail = 'Tento přechod stavu není povolen.'
+    default_detail = _('This status transition is not allowed.')
 
 
 class InUseError(BusinessError):
     status_code = 409
     default_code = 'IN_USE'
-    default_detail = 'Záznam je používaný a nelze ho smazat.'
+    default_detail = _('This record is in use and cannot be deleted.')
 
 
 class EmailTakenError(BusinessError):
     status_code = 409
     default_code = 'EMAIL_TAKEN'
-    default_detail = 'E-mail je již použitý.'
+    default_detail = _('This e-mail is already in use.')
 
 
 class LastAdminError(BusinessError):
     status_code = 409
     default_code = 'LAST_ADMIN'
-    default_detail = 'Poslednímu administrátorovi nelze odebrat roli ani ho smazat.'
+    default_detail = _('The last admin cannot have their role removed or be deleted.')
 
 
 class InvalidFileTokenError(BusinessError):
     status_code = 422
     default_code = 'INVALID_FILE_TOKEN'
-    default_detail = 'Odkaz na soubor je neplatný nebo prošlý.'
+    default_detail = _('The file link is invalid or has expired.')
 
 
 class FileTooLargeError(BusinessError):
     status_code = 413
     default_code = 'FILE_TOO_LARGE'
-    default_detail = 'Soubor je příliš velký.'
+    default_detail = _('The file is too large.')
 
 
 class UnsupportedFileTypeError(BusinessError):
     status_code = 422
     default_code = 'UNSUPPORTED_FILE_TYPE'
-    default_detail = 'Nepodporovaný typ souboru.'
+    default_detail = _('Unsupported file type.')
 
 
 # Fallback mapping for DRF/Django exceptions that don't carry our own `.code`
@@ -103,7 +104,7 @@ def _extract_errors(detail, prefix=''):
     elif isinstance(detail, dict):
         for key, value in detail.items():
             if not prefix and key in ('non_field_errors', 'detail'):
-                sub_general, _ = _extract_errors(value, '')
+                sub_general, _unused = _extract_errors(value, '')
                 general.extend(sub_general)
                 continue
             path = f'{prefix}.{key}' if prefix else str(key)
@@ -131,7 +132,7 @@ def custom_exception_handler(exc, context):
     if response is None:
         logger.exception('Unhandled exception in API view', exc_info=exc)
         return Response(
-            {'error': {'code': 'SERVER_ERROR', 'message': 'Nastala neočekávaná chyba.'}},
+            {'error': {'code': 'SERVER_ERROR', 'message': str(_('An unexpected error occurred.'))}},
             status=500,
         )
 
@@ -139,7 +140,7 @@ def custom_exception_handler(exc, context):
     if isinstance(exc, drf_exceptions.ValidationError):
         code = 'VALIDATION_ERROR'
         general, fields = _extract_errors(response.data)
-        message = ' '.join(general) if general else 'Zadané údaje neprošly validací.'
+        message = ' '.join(general) if general else str(_('The submitted data did not pass validation.'))
     else:
         code = getattr(exc, 'code', None)
         if not code:

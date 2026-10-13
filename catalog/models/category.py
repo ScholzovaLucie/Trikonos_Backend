@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils.translation import gettext_lazy as _
 
 from core.models import SimpleLookup
 
@@ -9,4 +10,5 @@ class Category(SimpleLookup):
 
     class Meta(SimpleLookup.Meta):
         db_table = 'categories'
-        verbose_name_plural = 'categories'
+        verbose_name = _('category')
+        verbose_name_plural = _('categories')

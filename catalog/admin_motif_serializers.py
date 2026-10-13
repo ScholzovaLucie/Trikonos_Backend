@@ -1,4 +1,5 @@
 from django.utils.text import slugify
+from django.utils.translation import gettext as _
 from rest_framework import serializers
 
 from core.exceptions import FileTooLargeError
@@ -50,7 +51,7 @@ class AdminMotifWriteSerializer(serializers.ModelSerializer):
         if self.instance:
             queryset = queryset.exclude(pk=self.instance.pk)
         if queryset.exists():
-            raise serializers.ValidationError({'slug': 'Tento slug už existuje.'})
+            raise serializers.ValidationError({'slug': _('This slug already exists.')})
         return attrs
 
 

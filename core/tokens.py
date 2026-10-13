@@ -6,6 +6,7 @@
 Both avoid needing a dedicated DB column just to look up a short-lived link.
 """
 from django.core import signing
+from django.utils.translation import gettext as _
 
 from core.exceptions import InvalidFileTokenError
 
@@ -24,7 +25,7 @@ def resolve_file_token(token):
     try:
         return signing.loads(token, salt=FILE_TOKEN_SALT, max_age=FILE_TOKEN_MAX_AGE)
     except signing.SignatureExpired:
-        raise InvalidFileTokenError('Odkaz na soubor už prošel, nahrajte prosím soubor znovu.')
+        raise InvalidFileTokenError(_('The file link has expired, please upload the file again.'))
     except signing.BadSignature:
         raise InvalidFileTokenError()
 

@@ -3,6 +3,7 @@ from io import BytesIO
 
 from django.core.files.storage import default_storage
 from django.db.models import Count, ProtectedError
+from django.utils.translation import gettext as _
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 from PIL import Image
 from rest_framework import serializers, status, viewsets
@@ -153,7 +154,7 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
         try:
             instance.delete()
         except ProtectedError:
-            raise InUseError('Motiv je použitý v objednávce a nelze ho smazat - zkuste ho deaktivovat.')
+            raise InUseError(_('This motif is used in an order and cannot be deleted - try deactivating it instead.'))
 
         for image in images:
             for key in ('path', 'thumbnail_small_path', 'thumbnail_large_path'):
@@ -190,7 +191,7 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
 
         extension = _PIL_FORMAT_TO_EXTENSION.get(uploaded.image.format)
         if extension is None:
-            raise serializers.ValidationError({'file': 'Povolené typy jsou JPG, PNG a WEBP.'})
+            raise serializers.ValidationError({'file': _('Allowed types are JPG, PNG and WEBP.')})
 
         uploaded.seek(0)
         original_bytes = uploaded.read()
@@ -250,7 +251,7 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
         images_by_id = {image['id']: image for image in (motif.images or [])}
         missing = [value for value in ids if value not in images_by_id]
         if missing:
-            raise serializers.ValidationError({'ids': f'Neznámá id: {", ".join(missing)}.'})
+            raise serializers.ValidationError({'ids': _('Unknown ids: %(ids)s.') % {'ids': ", ".join(missing)}})
 
         reordered = []
         for index, image_id in enumerate(ids):
@@ -295,7 +296,7 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
                     image['color_id'] = str(data['color'].id) if data['color'] else None
                 break
         else:
-            raise NotFound('Obrázek nenalezen.')
+            raise NotFound(_('Image not found.'))
 
         motif.images = images
         motif.save(update_fields=['images', 'updated_at'])
@@ -318,7 +319,7 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
         images = list(motif.images or [])
         target = next((img for img in images if img['id'] == image_id), None)
         if target is None:
-            raise NotFound('Obrázek nenalezen.')
+            raise NotFound(_('Image not found.'))
 
         for key in ('path', 'thumbnail_small_path', 'thumbnail_large_path'):
             path = target.get(key)
@@ -349,7 +350,7 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
         objects_by_id = {str(obj.pk): obj for obj in self.get_queryset().filter(pk__in=ids)}
         missing = [value for value in ids if value not in objects_by_id]
         if missing:
-            raise serializers.ValidationError({'ids': f'Neznámá id: {", ".join(missing)}.'})
+            raise serializers.ValidationError({'ids': _('Unknown ids: %(ids)s.') % {'ids': ", ".join(missing)}})
 
         for index, object_id in enumerate(ids):
             instance = objects_by_id[object_id]
