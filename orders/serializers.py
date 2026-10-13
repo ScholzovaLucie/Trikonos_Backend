@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from catalog.models import Color, Cut, Motif, PrintArea, ProductType
@@ -242,12 +243,13 @@ class OrderCreateResponseSerializer(serializers.Serializer):
     currency = serializers.CharField()
     items = serializers.SerializerMethodField()
 
-    def get_requires_quote(self, obj):
+    def get_requires_quote(self, obj) -> bool:
         return obj.status == OrderStatus.QUOTE_REQUESTED
 
-    def get_access_token(self, obj):
+    def get_access_token(self, obj) -> str:
         return self.context['access_token']
 
+    @extend_schema_field(OrderCreateResponseItemSerializer(many=True))
     def get_items(self, obj):
         return OrderCreateResponseItemSerializer(obj.items.all(), many=True).data
 
@@ -269,6 +271,7 @@ class OrderCustomerItemSerializer(serializers.Serializer):
     custom_text = serializers.CharField()
     placements = serializers.SerializerMethodField()
 
+    @extend_schema_field(OrderPlacementPreviewSerializer(many=True))
     def get_placements(self, obj):
         return OrderPlacementPreviewSerializer(obj.design_placements.all(), many=True).data
 
@@ -280,6 +283,12 @@ class OrderCustomerAddressSerializer(serializers.Serializer):
     city = serializers.CharField()
     zip = serializers.CharField()
     country = serializers.CharField()
+
+
+class OrderPaymentInstructionsSerializer(serializers.Serializer):
+    bank_account = serializers.CharField()
+    amount = serializers.IntegerField()
+    variable_symbol = serializers.CharField()
 
 
 class OrderCustomerDetailSerializer(serializers.Serializer):
@@ -306,12 +315,14 @@ class OrderCustomerDetailSerializer(serializers.Serializer):
     payment_instructions = serializers.SerializerMethodField()
     access_token = serializers.SerializerMethodField()
 
+    @extend_schema_field(OrderCustomerItemSerializer(many=True))
     def get_items(self, obj):
         return OrderCustomerItemSerializer(obj.items.all(), many=True).data
 
-    def get_carrier_name(self, obj):
+    def get_carrier_name(self, obj) -> str | None:
         return obj.carrier.name if obj.carrier_id else None
 
+    @extend_schema_field(OrderCustomerAddressSerializer)
     def get_billing(self, obj):
         return OrderCustomerAddressSerializer({
             'full_name': obj.billing_full_name,
@@ -322,6 +333,7 @@ class OrderCustomerDetailSerializer(serializers.Serializer):
             'country': obj.billing_country,
         }).data
 
+    @extend_schema_field(OrderCustomerAddressSerializer)
     def get_shipping(self, obj):
         return OrderCustomerAddressSerializer({
             'full_name': obj.shipping_full_name,
@@ -332,6 +344,7 @@ class OrderCustomerDetailSerializer(serializers.Serializer):
             'country': obj.shipping_country,
         }).data
 
+    @extend_schema_field(OrderPaymentInstructionsSerializer(allow_null=True))
     def get_payment_instructions(self, obj):
         if obj.payment_method != PaymentMethod.BANK_TRANSFER or obj.total is None:
             return None
@@ -343,5 +356,33 @@ class OrderCustomerDetailSerializer(serializers.Serializer):
             'variable_symbol': variable_symbol,
         }
 
-    def get_access_token(self, obj):
+    def get_access_token(self, obj) -> str:
         return self.context.get('access_token')
+
+
+class CartValidateLineResultSerializer(serializers.Serializer):
+    valid = serializers.BooleanField()
+    errors = serializers.ListField(child=serializers.CharField())
+    item_label = serializers.CharField(allow_null=True)
+    unit_price = serializers.IntegerField(allow_null=True)
+    line_total = serializers.IntegerField(allow_null=True)
+
+
+class CartValidateResponseSerializer(serializers.Serializer):
+    items = CartValidateLineResultSerializer(many=True)
+    subtotal = serializers.IntegerField(allow_null=True)
+    requires_quote = serializers.BooleanField()
+
+
+class DesignUploadRequestSerializer(serializers.Serializer):
+    file = serializers.FileField()
+
+
+class DesignUploadResponseSerializer(serializers.Serializer):
+    file_token = serializers.CharField()
+    url = serializers.CharField()
+    file_name = serializers.CharField()
+    size = serializers.IntegerField()
+    mime_type = serializers.CharField()
+    width_px = serializers.IntegerField(allow_null=True)
+    height_px = serializers.IntegerField(allow_null=True)

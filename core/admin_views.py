@@ -2,6 +2,7 @@ from datetime import timedelta
 
 from django.db.models import Q, Sum
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -9,15 +10,34 @@ from accounts.permissions import IsStaffOrAdmin
 from customers.models import Customer
 from orders.models import Order, OrderStatus, PaymentMethod, PaymentStatus
 
+from .admin_serializers import AdminDashboardResponseSerializer, AdminSearchResponseSerializer
+
 
 class AdminDashboardView(APIView):
-    """GET /dashboard - the admin landing page cards."""
+    """Karty na úvodní stránce administrace."""
     permission_classes = [IsStaffOrAdmin]
 
     REVENUE_EXCLUDED_STATUSES = [OrderStatus.CANCELLED, OrderStatus.REFUNDED]
     PENDING_STATUSES = [OrderStatus.NEW, OrderStatus.PAID, OrderStatus.PROCESSING]
     RECENT_ORDERS_LIMIT = 10
 
+    @extend_schema(
+        tags=['Admin - přehled'],
+        summary='Přehledové karty administrace',
+        description=(
+            'Data pro úvodní obrazovku administrace. `revenueToday`/`revenueYesterday` '
+            'je součet `total` ze všech objednávek daného dne **mimo CANCELLED a '
+            'REFUNDED** (zrušené/vrácené se do tržeb nepočítají). `pendingQuotes` = '
+            'počet objednávek ve stavu QUOTE_REQUESTED (čekají na ocenění adminem). '
+            '`ordersToProcess` = součet NEW + PAID + PROCESSING (objednávky, které '
+            'ještě potřebují nějakou akci). `unpaidTransfersInvoices` = objednávky '
+            'placené převodem nebo fakturou, kde `paymentStatus` je stále PENDING. '
+            '`recentOrders` je posledních 10 objednávek bez ohledu na stav, pro rychlý '
+            'přehled "co se teď děje". Žádná z hodnot se nestránkuje ani nefiltruje - '
+            'je to snapshot k okamžiku volání.'
+        ),
+        responses={200: AdminDashboardResponseSerializer},
+    )
     def get(self, request):
         now = timezone.now()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -70,12 +90,27 @@ class AdminDashboardView(APIView):
 
 
 class AdminSearchView(APIView):
-    """GET /search?q= - global admin search across orders/customers/motifs,
-    max 5 results per type.
-    """
+    """Globální vyhledávání v administraci napříč objednávkami, zákazníky a motivy."""
     permission_classes = [IsStaffOrAdmin]
     LIMIT = 5
 
+    @extend_schema(
+        tags=['Admin - přehled'],
+        summary='Globální hledání (objednávky, zákazníci, motivy)',
+        description=(
+            'Určeno pro vyhledávací pole v horní liště administrace - jedno pole, tři '
+            'typy výsledků najednou. Prohledává: objednávky (číslo objednávky, e-mail '
+            'a jméno zákazníka, sledovací číslo), zákazníky (e-mail, jméno, firma, '
+            'telefon) a motivy (název). Hledání je `icontains` (nerozlišuje velikost '
+            'písmen, hledá podřetězec, ne jen přesnou shodu). Vrací max 5 výsledků '
+            '**na každý typ** - není to stránkovaný seznam, je to rychlý náhled; pro '
+            'kompletní seznam použij `GET /admin/orders`, `/admin/customers` nebo '
+            '`/admin/motifs` s parametrem `q`. Bez parametru `q` (nebo prázdný) vrátí '
+            'tři prázdná pole, ne chybu.'
+        ),
+        parameters=[OpenApiParameter('q', str, OpenApiParameter.QUERY, description='Hledaný text.')],
+        responses={200: AdminSearchResponseSerializer},
+    )
     def get(self, request):
         from catalog.models import Motif
 

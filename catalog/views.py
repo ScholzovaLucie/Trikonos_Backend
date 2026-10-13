@@ -3,6 +3,7 @@ from datetime import timedelta
 from django.db.models import Count, Prefetch, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
@@ -13,11 +14,39 @@ from orders.models import Size
 from shipping.models import Carrier
 
 from .models import Category, Color, Cut, Motif, PrintArea, ProductType
-from .serializers import CategorySerializer, MotifDetailSerializer, MotifListSerializer
+from .serializers import (
+    CatalogOptionsResponseSerializer,
+    CategorySerializer,
+    MotifDetailSerializer,
+    MotifListSerializer,
+)
 
 RELATED_MOTIFS_LIMIT = 8
 
 
+@extend_schema_view(
+    list=extend_schema(
+        tags=['Katalog'],
+        summary='Seznam kategorií (menu, homepage)',
+        description=(
+            'Aktivní kategorie pro navigační menu, ikony na homepage nebo sidebar. '
+            'Vždy seřazené podle `position`, pak `name`. `motifCount` je počet '
+            '**aktivních** motivů v kategorii (ne všech) - použij pro zobrazení počtu '
+            'u názvu kategorie. Neaktivní kategorie se v tomto seznamu nikdy '
+            'neobjeví. Bez stránkování (kategorií je málo, vrací se všechny najednou).'
+        ),
+    ),
+    retrieve=extend_schema(
+        tags=['Katalog'],
+        summary='Detail kategorie podle slugu',
+        description=(
+            'Pro hlavičku výpisu motivů a breadcrumb. Vyhledává podle `slug`, ne podle '
+            '`id`. Pokud kategorie existuje, ale je neaktivní, vrací 404 stejně jako '
+            'kdyby neexistovala - frontend nemá jak rozlišit "neexistuje" od '
+            '"neaktivní", a ani nemusí.'
+        ),
+    ),
+)
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     """GET /categories, GET /categories/{slug} - storefront navigation."""
     serializer_class = CategorySerializer
@@ -34,6 +63,34 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
         )
 
 
+@extend_schema_view(
+    list=extend_schema(
+        tags=['Katalog'],
+        summary='Výpis motivů (katalog, homepage Novinky)',
+        description=(
+            'Stránkovaný seznam aktivních motivů (24/stránku, `page`/`pageSize`). '
+            'Filtry: `category` (slug kategorie, ne id), `q` (fulltext v názvu a '
+            'popisu), `ids` (čárkou oddělený seznam UUID - použij pro obnovu košíku '
+            'po reloadu stránky, abys dostal aktuální ceny/dostupnost pro konkrétní '
+            'motivy). Řazení parametrem `ordering`: `position` (výchozí, ruční pořadí '
+            'z administrace), `-createdAt` (nejnovější první, pro homepage "Novinky z '
+            'hor"), `price`/`-price`, `name`, `popular` (podle počtu prodaných kusů '
+            'za posledních 90 dní). Vrací jen aktivní motivy - neaktivní se v '
+            'žádném případě neobjeví, i kdyby odpovídaly filtru.'
+        ),
+    ),
+    retrieve=extend_schema(
+        tags=['Katalog'],
+        summary='Detail motivu podle slugu (konfigurátor)',
+        description=(
+            'Plný detail pro stránku motivu / konfigurátor. Obsahuje `description`, '
+            'cenu a **všechny** obrázky motivu (ne jen hlavní) - každý obrázek má '
+            '`colorId`; frontend podle vybrané barvy ve `/catalog/options` přepne '
+            'galerii na obrázky s odpovídajícím `colorId` (nebo ukáže výchozí, pokud '
+            'žádný obrázek tu barvu nemá). Vyhledává podle `slug`.'
+        ),
+    ),
+)
 class MotifViewSet(viewsets.ReadOnlyModelViewSet):
     """GET /motifs, GET /motifs/{slug}, GET /motifs/{slug}/related."""
     permission_classes = [AllowAny]
@@ -85,6 +142,19 @@ class MotifViewSet(viewsets.ReadOnlyModelViewSet):
             ).order_by('-units_sold', 'position')
         return queryset.order_by('position', 'name')
 
+    @extend_schema(
+        tags=['Katalog'],
+        summary='Doporučené motivy ("Do party se hodí i...")',
+        description=(
+            'Max 8 aktivních motivů ze **stejné kategorie** jako zadaný motiv, bez '
+            'něj samotného, seřazené od nejnovějších. Pokud kategorie nemá dost '
+            'motivů na doplnění do 8, zbytek se doplní nejnovějšími motivy z '
+            'jakékoli kategorie (tyto filler položky se mohou měnit mezi requesty, '
+            'jak přibývají nové motivy). Vrací stejný tvar jako položka ve výpisu '
+            '`GET /motifs` (ne plný detail).'
+        ),
+        responses={200: MotifListSerializer(many=True)},
+    )
     @action(detail=True, methods=['get'])
     def related(self, request, slug=None):
         """Max 8 active motifs from the same category, topped up with the
@@ -111,6 +181,21 @@ class CatalogOptionsView(APIView):
     """
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=['Katalog'],
+        summary='Všechny aktivní číselníky jedním voláním (konfigurátor, checkout)',
+        description=(
+            'Jediné volání, které konfigurátor/editor vlastního potisku/checkout '
+            'potřebuje k vykreslení výběru typu oblečení, střihu, barvy, velikosti a '
+            'dopravce - místo volání 5 různých endpointů zvlášť. `productTypes` má '
+            'zanořené `printAreas` (`widthMm`/`heightMm` v milimetrech - používej pro '
+            'rozměry editoru vlastního potisku i validaci umístění na frontendu, i '
+            'když finální kontrolu stejně dělá server). `sizes` je pevný seznam '
+            'S-XXL, ne z DB. Vrací jen aktivní záznamy. Bezpečné cachovat na pár '
+            'minut - mění se jen při úpravě číselníků v administraci.'
+        ),
+        responses={200: CatalogOptionsResponseSerializer},
+    )
     def get(self, request):
         product_types = ProductType.objects.filter(is_active=True).order_by('position', 'name').prefetch_related(
             Prefetch(

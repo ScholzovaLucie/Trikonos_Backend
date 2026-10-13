@@ -1,4 +1,5 @@
 from django.core import signing
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import generics, serializers, status
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import AllowAny
@@ -23,7 +24,10 @@ from core.uploads import (
 from . import services
 from .models import Order
 from .serializers import (
+    CartValidateResponseSerializer,
     CartValidateSerializer,
+    DesignUploadRequestSerializer,
+    DesignUploadResponseSerializer,
     OrderCreateResponseSerializer,
     OrderCreateSerializer,
     OrderCustomerDetailSerializer,
@@ -38,6 +42,32 @@ class CartValidateView(APIView):
     """
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=['Checkout'],
+        summary='Ověřit košík před odeslením objednávky',
+        description=(
+            'Pro krok "Shrnutí" v košíku a jako poslední kontrola před `POST '
+            '/orders`. Tělo má **stejný tvar jako `items` v `POST /orders`** - '
+            'žádné údaje o zákazníkovi, adrese ani dopravě, jen položky. '
+            '**Nic se neukládá** - server jen spočítá, co by se stalo, kdyby se '
+            'objednávka odeslala s těmito položkami teď.\n\n'
+            'Odpověď má pro každou položku (ve stejném pořadí jako v požadavku) '
+            '`valid`, `errors` (lidsky čitelné české hlášky, prázdné když je vše '
+            'v pořádku), `itemLabel` (snapshot popisku, null při chybě), '
+            '`unitPrice` (null u vlastního potisku nebo chybné položky), '
+            '`lineTotal` (`unitPrice × quantity`, null když cena chybí). Souhrn: '
+            '`subtotal` je null, pokud je kterákoli položka neplatná NEBO '
+            'nedocenitelná (vlastní potisk) - tedy "null" neznamená chybu, může '
+            'to jen znamenat čekání na ocenění adminem. `requiresQuote` je true, '
+            'pokud košík obsahuje aspoň jednu položku s vlastním potiskem - '
+            'frontend podle toho může zobrazit "cenu potvrdíme e-mailem" ještě '
+            'před odeslením objednávky.\n\n'
+            'Volej při každém otevření košíku (ceny/aktivita motivů se mohly '
+            'mezitím změnit) a znovu těsně před `POST /orders`.'
+        ),
+        request=CartValidateSerializer,
+        responses={200: CartValidateResponseSerializer},
+    )
     def post(self, request):
         serializer = CartValidateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -75,6 +105,52 @@ class OrderCreateView(generics.CreateAPIView):
     permission_classes = [AllowAny]
     throttle_scope = 'public-write'
 
+    @extend_schema(
+        tags=['Checkout'],
+        summary='Odeslat objednávku (checkout)',
+        description=(
+            'Finální krok checkoutu. Nevyžaduje přihlášení ani existující účet - '
+            'zákazník se dohledá nebo založí podle `customer.email` (case-'
+            'insensitive, uloží se malými písmeny). Server **nikdy nevěří** '
+            'cenám ani popiskům poslaným z frontendu - `unitPrice` u katalogové '
+            'položky se vždy spočítá z aktuální ceny motivu, `itemLabel` se '
+            'vždy sestaví na serveru.\n\n'
+            '**Pravidla:**\n'
+            '- `termsAccepted` musí být `true`, jinak 400.\n'
+            '- `shipping.sameAsBilling: true` zkopíruje fakturační adresu; jinak '
+            'jsou `fullName`/`street`/`city`/`zip` doručovací adresy povinné.\n'
+            '- `delivery.deliveryType: "PICKUP_POINT"` vyžaduje `pickupPointId` '
+            'i `pickupPointName`.\n'
+            '- Katalogová položka (`isCustom: false`) potřebuje `motifId` a '
+            'žádná `placements`; vlastní položka (`isCustom: true`) nesmí mít '
+            '`motifId` a potřebuje aspoň jedno umístění v `placements`, každé s '
+            '`fileToken` získaným z `POST /uploads/designs` (prošlý/neplatný '
+            'token → 422 `INVALID_FILE_TOKEN`).\n'
+            '- Umístění musí patřit k tiskovému bloku stejného typu oblečení '
+            'jako položka a vejít se do jeho rozměrů, jinak 422.\n'
+            '- Prázdné `items` → 400.\n\n'
+            '**Stav při vzniku:** obsahuje-li objednávka aspoň jednu vlastní '
+            'položku → `QUOTE_REQUESTED` (čeká na ocenění adminem), jinak `NEW` '
+            '(cena zboží je jasná, čeká se na dopravu a potvrzení). Odpověď '
+            'obsahuje `accessToken` - ulož si ho na frontendu (např. do URL '
+            'potvrzovací stránky), je to jediný veřejný způsob, jak se k '
+            'objednávce znovu vrátit přes `GET /orders/access/{accessToken}`, '
+            'kromě dohledání přes `POST /orders/lookup`. Po úspěchu se odešlou '
+            'e-maily zákazníkovi i obchodu.'
+        ),
+        request=OrderCreateSerializer,
+        responses={
+            201: OrderCreateResponseSerializer,
+            400: OpenApiResponse(description='Validační chyba (chybí pole, termsAccepted=false, prázdné items...).'),
+            422: OpenApiResponse(description='Porušené obchodní pravidlo (neaktivní motiv, umístění mimo blok, neplatný fileToken...).'),
+        },
+    )
+    def post(self, request, *args, **kwargs):
+        # CreateAPIView dispatches POST through post() -> create(); spectacular
+        # introspects the actual bound HTTP-verb method for plain (non-ViewSet)
+        # generic views, not the mixin's `create`, so the schema lives here.
+        return super().post(request, *args, **kwargs)
+
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -95,6 +171,32 @@ class DesignUploadView(APIView):
     MAX_SIZE = 20 * 1024 * 1024
     ALLOWED_KINDS = {PNG, JPG, SVG, PDF}
 
+    @extend_schema(
+        tags=['Checkout'],
+        summary='Nahrát podklad pro vlastní potisk',
+        description=(
+            'První krok editoru vlastního potisku - nahraje se sem obrázek '
+            'PŘED odesláním objednávky. Multipart `file`, povolené PNG, JPG, '
+            'SVG, PDF, max 20 MB (jinak 413). Typ souboru se ověřuje podle '
+            '**skutečného obsahu** (magic bytes), ne podle přípony v názvu - '
+            'podvržený soubor s jinou příponou vrátí 422 '
+            '`UNSUPPORTED_FILE_TYPE`. SVG se navíc sanitizuje (odstraní se '
+            '`<script>`, `on*` atributy a externí odkazy).\n\n'
+            'Soubor se uloží pod náhodným názvem (nikdy pod jménem od '
+            'uživatele) a vrátí se `fileToken` - **podepsaný, platný 7 dní**. '
+            'Tento token (ne `url`) pošli v `placements[].fileToken` při '
+            '`POST /orders` - je to jediný způsob, jak soubor napojit na '
+            'objednávku. `url` slouží jen k zobrazení náhledu v editoru. '
+            '`widthPx`/`heightPx` jsou k dispozici jen pro rastrové obrázky '
+            '(PNG/JPG), pro SVG/PDF jsou `null`.'
+        ),
+        request=DesignUploadRequestSerializer,
+        responses={
+            201: DesignUploadResponseSerializer,
+            413: OpenApiResponse(description='Soubor větší než 20 MB.'),
+            422: OpenApiResponse(description='Nepodporovaný typ souboru (podle obsahu, ne přípony).'),
+        },
+    )
     def post(self, request):
         uploaded = request.data.get('file')
         if uploaded is None:
@@ -143,6 +245,26 @@ class OrderLookupView(APIView):
     permission_classes = [AllowAny]
     throttle_scope = 'public-write'
 
+    @extend_schema(
+        tags=['Checkout'],
+        summary='Dohledat objednávku (číslo + e-mail)',
+        description=(
+            'Pro stránku "Stav objednávky", kam se zákazník dostane bez odkazu '
+            'z e-mailu - zadá číslo objednávky (`orderNumber`, např. '
+            '`TRK-2026-0042`) a e-mail, který uvedl při objednání. Shoda obojího '
+            '→ vrátí detail objednávky + čerstvý `accessToken` (stejný tvar jako '
+            '`GET /orders/access/{accessToken}`). Neshoda v čísle NEBO v '
+            'e-mailu → **vždy stejná 404** - odpověď nikdy neprozradí, jestli '
+            'bylo špatně číslo, e-mail, nebo objednávka neexistuje. E-mail se '
+            'posílá v těle požadavku, nikdy v URL (aby nezůstal v historii '
+            'prohlížeče ani v logu serveru).'
+        ),
+        request=OrderLookupRequestSerializer,
+        responses={
+            200: OrderCustomerDetailSerializer,
+            404: OpenApiResponse(description='Objednávka nenalezena (číslo i e-mail musí sedět současně).'),
+        },
+    )
     def post(self, request):
         serializer = OrderLookupRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -165,6 +287,26 @@ class OrderAccessView(APIView):
     """
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=['Checkout'],
+        summary='Detail objednávky přes přístupový token',
+        description=(
+            'Pro potvrzovací stránku po odeslání objednávky a pro odkaz '
+            'rozeslaný v e-mailech (přijetí, potvrzení, odeslání...). '
+            '`accessToken` dostaneš z odpovědi `POST /orders` nebo `POST '
+            '/orders/lookup` - je to podepsané ID objednávky s platností 180 '
+            'dní, bez vlastního sloupce v databázi. Neplatný nebo prošlý token '
+            'vrátí 404 (ne 401/403 - z pohledu veřejnosti objednávka "neexistuje"). '
+            'Tohle je jediný veřejný způsob, jak se dostat k detailu objednávky - '
+            '**holé `GET /orders/{id}` bez tokenu veřejně neexistuje.** Odpověď '
+            'obsahuje i `paymentInstructions` (účet, částka, variabilní symbol) '
+            'pokud je platba převodem a cena je už stanovená.'
+        ),
+        responses={
+            200: OrderCustomerDetailSerializer,
+            404: OpenApiResponse(description='Token je neplatný, podvržený nebo prošlý.'),
+        },
+    )
     def get(self, request, access_token):
         try:
             order_id = resolve_order_access_token(access_token)

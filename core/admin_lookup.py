@@ -3,6 +3,7 @@ product types, print areas, carriers) - one base ModelViewSet instead of six
 near-identical ones. Subclasses set queryset/serializer_class/search_fields.
 """
 from django.db.models import ProtectedError, Q
+from drf_spectacular.utils import OpenApiResponse, extend_schema, extend_schema_view
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -14,6 +15,62 @@ from core.pagination import AdminPagination
 
 class ReorderSerializer(serializers.Serializer):
     ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=False)
+
+
+def lookup_schema_view(entity, entity_plural, extra_note=''):
+    """Czech @extend_schema_view shared by every LookupAdminViewSet subclass -
+    list/retrieve/create/partial_update/destroy/reorder differ only by the
+    entity's name, not by behaviour, so this is parametrized once instead of
+    repeated six times (categories/colors/cuts/product-types/print-areas/carriers).
+    """
+    note_suffix = f' {extra_note}' if extra_note else ''
+    return extend_schema_view(
+        list=extend_schema(
+            tags=['Admin - číselníky'],
+            summary=f'Seznam {entity_plural}',
+            description=(
+                f'Vrátí VŠECHNY {entity_plural} včetně neaktivních (na rozdíl od '
+                'veřejného API, kde se neaktivní nikdy neukážou). Filtr `isActive` '
+                '(true/false) a fulltext `q` v názvu. Čtení smí ADMIN i STAFF.'
+            ),
+        ),
+        retrieve=extend_schema(
+            tags=['Admin - číselníky'],
+            summary=f'Detail {entity}',
+            description=f'Detail jedné položky z {entity_plural} podle `id`.',
+        ),
+        create=extend_schema(
+            tags=['Admin - číselníky'],
+            summary=f'Vytvořit {entity}',
+            description=f'Jen role ADMIN.{note_suffix}',
+        ),
+        partial_update=extend_schema(
+            tags=['Admin - číselníky'],
+            summary=f'Upravit {entity}',
+            description=f'Jen role ADMIN. Částečná úprava (PATCH) - pošli jen pole, která měníš.{note_suffix}',
+        ),
+        destroy=extend_schema(
+            tags=['Admin - číselníky'],
+            summary=f'Smazat {entity}',
+            description=(
+                f'Jen role ADMIN. Pokud je {entity} použitý v objednávce nebo motivu '
+                '(DB vazba `PROTECT`), vrátí 409 `IN_USE` - použij `isActive: false` '
+                'místo mazání.'
+            ),
+        ),
+        reorder=extend_schema(
+            tags=['Admin - číselníky'],
+            summary=f'Změnit pořadí {entity_plural}',
+            description=(
+                'Tělo `{"ids": ["uuid1", "uuid2", ...]}` v požadovaném pořadí - server '
+                'přepíše `position` na 10, 20, 30... podle pořadí v seznamu (mezery '
+                'po 10 nechávají místo na ruční doladění přímo v DB, kdyby bylo '
+                'potřeba). Všechna id musí existovat, jinak 400.'
+            ),
+            request=ReorderSerializer,
+            responses={204: OpenApiResponse(description='Pořadí uloženo.')},
+        ),
+    )
 
 
 class LookupAdminViewSet(viewsets.ModelViewSet):

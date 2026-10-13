@@ -8,6 +8,10 @@ class PrintArea(SimpleLookup):
     """Placement slot available in the custom-print editor. Varies by
     product type (a t-shirt has sleeves, a cap doesn't).
     """
+    # Overrides SimpleLookup.name (globally unique) - here the name only
+    # needs to be unique within a product_type (see uq_print_area_product_type_name
+    # below), so e.g. "Přední strana" can exist for both Tričko and Mikina.
+    name = models.CharField(max_length=255)
     product_type = models.ForeignKey(ProductType, on_delete=models.CASCADE, related_name='print_areas')
     width_mm = models.PositiveIntegerField(help_text='Print area size, used by both the editor and the printer')
     height_mm = models.PositiveIntegerField()

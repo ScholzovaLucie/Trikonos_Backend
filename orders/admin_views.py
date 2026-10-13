@@ -1,8 +1,9 @@
 from django.db import transaction
 from django.db.models import BooleanField, Case, Count, Q, When
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import MethodNotAllowed, NotFound
 from rest_framework.response import Response
 
 from accounts.models import StaffRole
@@ -11,7 +12,7 @@ from accounts.permissions import IsStaffOrAdmin
 from . import services
 from .admin_serializers import (
     LOCKED_UPDATE_FIELDS,
-    AdminOrderAddressSerializer,
+    AdminConfirmOrderSerializer,
     AdminOrderDetailSerializer,
     AdminOrderItemPriceSerializer,
     AdminOrderListSerializer,
@@ -26,6 +27,8 @@ from .admin_serializers import (
 from .models import Order, OrderStatus, PaymentStatus, ShipmentStatus
 from .serializers import OrderCreateSerializer
 
+_TAG = ['Admin - objednávky']
+
 _ORDERING_MAP = {
     '-createdAt': '-created_at',
     'createdAt': 'created_at',
@@ -35,15 +38,51 @@ _ORDERING_MAP = {
     '-orderNumber': '-order_number',
 }
 
+_ITEM_ID_PARAM = OpenApiParameter('item_id', str, OpenApiParameter.PATH, description='UUID položky objednávky (order_items.id).')
+_PLACEMENT_ID_PARAM = OpenApiParameter('placement_id', str, OpenApiParameter.PATH, description='UUID umístění potisku.')
 
+
+@extend_schema_view(
+    list=extend_schema(
+        tags=_TAG,
+        summary='Seznam objednávek',
+        description=(
+            'Filtry: `status` (víc hodnot oddělených čárkou, např. '
+            '`NEW,PAID,PROCESSING`), `paymentStatus`, `shipmentStatus`, '
+            '`paymentMethod`, `carrier` (id dopravce), `customer` (id '
+            'zákazníka - pro zobrazení "všechny objednávky tohoto zákazníka"), '
+            '`hasCustom` (true/false - jen objednávky s/bez vlastního potisku), '
+            '`createdFrom`/`createdTo` (ISO datum), `q` (fulltext: číslo '
+            'objednávky, e-mail a jméno zákazníka, sledovací číslo). Řazení '
+            '`ordering`: `-createdAt` (výchozí), `total`, `orderNumber` (a '
+            'jejich varianty s/bez pomlčky). Řádek obsahuje `itemCount` a '
+            '`hasCustom` jako anotace z databáze (ne N+1).'
+        ),
+    ),
+    retrieve=extend_schema(
+        tags=_TAG,
+        summary='Detail objednávky',
+        description=(
+            'Kompletní detail: zákazník, obě adresy, doprava, platba, '
+            'poznámka, rozpad položek (motiv/typ/střih/barva/velikost/cena) a u '
+            'vlastních položek `customText` + umístění s náhledem a názvem '
+            'bloku. Navíc:\n'
+            '- `allowedTransitions` - do kterých stavů smí TENTO přihlášený '
+            'uživatel (podle role) objednávku právě teď posunout; prázdné '
+            'pole = žádný přechod není momentálně možný.\n'
+            '- `isLocked` - `true` mimo stavy QUOTE_REQUESTED/NEW, kdy nejde '
+            'měnit ceny, dopravu ani adresy (`trackingNumber` lze měnit '
+            'kdykoli).\n'
+            '- `confirmedAt` - kdy admin objednávku naposledy potvrdil '
+            '(`null` = ještě nikdy, nebo byla potvrzená cena od té doby '
+            'změněna a potvrzení tím zaniklo).'
+        ),
+    ),
+)
 class AdminOrderViewSet(viewsets.ModelViewSet):
-    """/admin/orders - ADMIN and STAFF both get full read/write; the few
-    ADMIN-only actions (REFUNDED, cancel-in-production) are gated inside
-    orders.services via the caller's role, not at the permission-class level,
-    since most of this viewset's actions are shared between both roles.
-    """
+    """Objednávky - jádro administrace. Nikdy se nemažou, zrušení = status CANCELLED."""
     permission_classes = [IsStaffOrAdmin]
-    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    http_method_names = ['get', 'post', 'patch', 'put', 'head', 'options']
     filter_backends = []  # every filter below is bespoke (comma lists, camelCase params)
 
     def get_queryset(self):
@@ -114,6 +153,21 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
     def _is_admin_role(self):
         return self.request.user.role == StaffRole.ADMIN
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Ručně založit objednávku (telefon/e-mail)',
+        description=(
+            'Pro objednávky přijaté telefonicky nebo e-mailem, kdy je admin '
+            'zadává za zákazníka. **Stejné tělo a validace jako veřejné `POST '
+            '/orders`**, se dvěma rozdíly: `termsAccepted` není povinné a u '
+            'položek navíc smíš poslat `unitPrice` rovnou (hodí se pro vlastní '
+            'potisk, kde cenu domlouváš předem telefonem - bez toho zůstane '
+            '`unitPrice` null jako u veřejné cesty). Zákazník se stejně jako '
+            'při veřejném checkoutu dohledá/založí podle e-mailu.'
+        ),
+        request=OrderCreateSerializer,
+        responses={201: AdminOrderDetailSerializer},
+    )
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -121,6 +175,25 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         detail = AdminOrderDetailSerializer(order, context=self.get_serializer_context())
         return Response(detail.data, status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Upravit adresy, dopravu, platební metodu, poznámku',
+        description=(
+            'Částečná úprava (PATCH) - pošli jen pole, která měníš. '
+            '`billing`/`shipping`/`carrierId`/`deliveryType`/`pickupPointId`/'
+            '`pickupPointName`/`paymentMethod`/`note` jdou měnit **jen ve '
+            'stavech QUOTE_REQUESTED a NEW** - jinde vrátí 409 `ORDER_LOCKED`. '
+            '`trackingNumber` je výjimka a smí se měnit kdykoli (i na '
+            'odeslané/doručené objednávce, pro dodatečnou opravu). Pro ocenění '
+            'položek a dopravy použij samostatné endpointy '
+            '(`.../items/{itemId}`, `.../shipping-cost`), ne tento.'
+        ),
+        request=AdminOrderUpdateSerializer,
+        responses={
+            200: AdminOrderDetailSerializer,
+            409: OpenApiResponse(description='ORDER_LOCKED - objednávka není ve stavu QUOTE_REQUESTED/NEW.'),
+        },
+    )
     def partial_update(self, request, *args, **kwargs):
         order = self.get_object()
         serializer = AdminOrderUpdateSerializer(data=request.data, partial=True)
@@ -166,6 +239,38 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         order.save()
         return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
 
+    @extend_schema(exclude=True)
+    def update(self, request, *args, **kwargs):
+        # 'put' is in http_method_names only so the shipping-cost action can
+        # use PUT (per the API guide) - that enables the router's default
+        # full-replace PUT on the detail route too (ModelViewSet always
+        # provides `update`), which was never intended or designed for. Block
+        # it explicitly instead of leaving an untested full-replace live.
+        raise MethodNotAllowed('PUT')
+
+    @extend_schema(
+        tags=_TAG,
+        summary='Ocenit položku objednávky',
+        description=(
+            '**Hlavní nástroj pro ocenění poptávky** (vlastní potisk čeká na '
+            'cenu od admina). `unitPrice` v haléřích (pošli `null` pro vrácení '
+            'položky zpět do stavu "čeká na ocenění") a/nebo `quantity` '
+            '(1-500) - obě pole nepovinná, pošli jen to, co měníš. Po uložení '
+            'se automaticky přepočítá `subtotal` a `total` celé objednávky a '
+            'vrátí se **celá objednávka**, ne jen položka. Jen ve stavech '
+            'QUOTE_REQUESTED/NEW, jinak 409 `ORDER_LOCKED`. Pokud byla '
+            'objednávka už potvrzená (`confirmedAt` nebylo null), změna ceny '
+            'potvrzení zruší (`confirmedAt` → null) - admin musí zavolat '
+            '`/confirm` znovu, aby zákazník dostal e-mail s aktuální cenou.'
+        ),
+        parameters=[_ITEM_ID_PARAM],
+        request=AdminOrderItemPriceSerializer,
+        responses={
+            200: AdminOrderDetailSerializer,
+            404: OpenApiResponse(description='Položka s daným item_id v této objednávce neexistuje.'),
+            409: OpenApiResponse(description='ORDER_LOCKED - objednávka není ve stavu QUOTE_REQUESTED/NEW.'),
+        },
+    )
     @action(detail=True, methods=['patch'], url_path=r'items/(?P<item_id>[^/.]+)')
     def update_item(self, request, pk=None, item_id=None):
         order = self.get_object()
@@ -181,6 +286,27 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         order.refresh_from_db()
         return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Upravit umístění vlastního potisku',
+        description=(
+            'Oprava rozměrů/pozice/rotace umístění, nebo přesun na jiný '
+            'tiskový blok (`printAreaId`) - všechna pole nepovinná, pošli jen '
+            'co měníš. Server znovu zkontroluje, že (případně nový) tiskový '
+            'blok patří ke stejnému typu oblečení jako položka a že se '
+            '(případně nové) rozměry vejdou do bloku - při porušení 422, '
+            'stejně jako při `POST /orders`. Jen ve stavech '
+            'QUOTE_REQUESTED/NEW, jinak 409 `ORDER_LOCKED`.'
+        ),
+        parameters=[_ITEM_ID_PARAM, _PLACEMENT_ID_PARAM],
+        request=AdminPlacementUpdateSerializer,
+        responses={
+            200: AdminOrderDetailSerializer,
+            404: OpenApiResponse(description='Položka nebo umístění s daným id v této objednávce neexistuje.'),
+            409: OpenApiResponse(description='ORDER_LOCKED - objednávka není ve stavu QUOTE_REQUESTED/NEW.'),
+            422: OpenApiResponse(description='Blok jiného typu oblečení, nebo umístění se nevejde do rozměrů bloku.'),
+        },
+    )
     @action(detail=True, methods=['patch'], url_path=r'items/(?P<item_id>[^/.]+)/placements/(?P<placement_id>[^/.]+)')
     def update_placement(self, request, pk=None, item_id=None, placement_id=None):
         order = self.get_object()
@@ -217,6 +343,22 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         order.refresh_from_db()
         return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Stáhnout originální podklad zákazníka',
+        description=(
+            'Stažení souboru, který zákazník nahrál pro vlastní potisk na '
+            'dané umístění - pro tisk nebo kontrolu. Odpověď přesměruje na '
+            'uložený soubor (`url` z `custom_design_placements`); v '
+            'produkčním nastavení za privátním úložištěm by se toto chování '
+            'nahradilo proxováním s `Content-Disposition: attachment`.'
+        ),
+        parameters=[_ITEM_ID_PARAM, _PLACEMENT_ID_PARAM],
+        responses={
+            302: OpenApiResponse(description='Přesměrování na uložený soubor.'),
+            404: OpenApiResponse(description='Položka nebo umístění s daným id v této objednávce neexistuje.'),
+        },
+    )
     @action(detail=True, methods=['get'], url_path=r'items/(?P<item_id>[^/.]+)/placements/(?P<placement_id>[^/.]+)/file')
     def placement_file(self, request, pk=None, item_id=None, placement_id=None):
         from django.http import HttpResponseRedirect
@@ -232,6 +374,24 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         # proxy response if/when file storage moves behind a private bucket.
         return HttpResponseRedirect(placement.url)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Nastavit cenu dopravy',
+        description=(
+            '`shippingCost` v haléřích (`0` znamená dopravu zdarma, ne '
+            '"nenastaveno" - rozdíl od `null`, které znamená "ještě '
+            'nerozhodnuto"). Po uložení se přepočítá `total` celé objednávky. '
+            'Jen ve stavech QUOTE_REQUESTED/NEW, jinak 409 `ORDER_LOCKED`. '
+            'Stejně jako u ocenění položky, pokud byla objednávka už '
+            'potvrzená, tímto se potvrzení zruší a je nutné zavolat `/confirm` '
+            'znovu.'
+        ),
+        request=AdminShippingCostSerializer,
+        responses={
+            200: AdminOrderDetailSerializer,
+            409: OpenApiResponse(description='ORDER_LOCKED - objednávka není ve stavu QUOTE_REQUESTED/NEW.'),
+        },
+    )
     @action(detail=True, methods=['put'], url_path='shipping-cost')
     def shipping_cost(self, request, pk=None):
         order = self.get_object()
@@ -241,6 +401,27 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         order.refresh_from_db()
         return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Potvrdit objednávku zákazníkovi',
+        description=(
+            'Odešle zákazníkovi e-mail s finální cenou a platebními '
+            'instrukcemi (u platby převodem: účet, částka, variabilní '
+            'symbol). Vyžaduje, aby `total` nebyl `null` (všechny položky '
+            'oceněné + nastavená doprava), jinak 422 `ORDER_NOT_PRICED`. '
+            'U stavu QUOTE_REQUESTED navíc přepne objednávku na NEW. '
+            'Nastaví `confirmedAt` na aktuální čas - to je podmínka pro '
+            'pozdější přechod NEW → PROCESSING. Nepovinné `message` je osobní '
+            'text admina, který se vloží do e-mailu (např. poznámka k '
+            'poptávce). **Je idempotentní** - opakované volání jen znovu '
+            'pošle e-mail, nic se tím nerozbije.'
+        ),
+        request=AdminConfirmOrderSerializer,
+        responses={
+            200: AdminOrderDetailSerializer,
+            422: OpenApiResponse(description='ORDER_NOT_PRICED - total je stále null.'),
+        },
+    )
     @action(detail=True, methods=['post'])
     def confirm(self, request, pk=None):
         from .emails import send_order_confirmed_email
@@ -253,6 +434,32 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         order.refresh_from_db()
         return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Změnit stav objednávky',
+        description=(
+            'Posune `status` podle pevné mapy povolených přechodů (viz návod, '
+            'kapitola 3) - nepovolený přechod vrací 409 '
+            '`INVALID_STATUS_TRANSITION`. Některé přechody navíc vyžadují '
+            'splněnou podmínku (např. NEW→PAID potřebuje stanovený `total`, '
+            'PROCESSING→SHIPPED potřebuje vyplněného dopravce) - při nesplnění '
+            'také 409. Přechody na REFUNDED a zrušení objednávky už ve výrobě '
+            '(PROCESSING→CANCELLED) smí **jen role ADMIN** (STAFF dostane '
+            '403). Zjisti dopředu, co je právě povolené, z pole '
+            '`allowedTransitions` v detailu objednávky. Speciální případ: '
+            'cílový stav `PAID` u objednávky placené na dobírku se automaticky '
+            'přesměruje na `PROCESSING` (dobírka nikdy neprochází stavem '
+            'PAID). Návazné změny (např. SHIPPED nastaví `shipmentStatus` na '
+            'HANDED_OVER, pokud byl nižší) se dějí automaticky. Nepovinné '
+            '`note` jde k internímu záznamu.'
+        ),
+        request=AdminOrderStatusSerializer,
+        responses={
+            200: AdminOrderDetailSerializer,
+            403: OpenApiResponse(description='Tento přechod smí jen role ADMIN.'),
+            409: OpenApiResponse(description='INVALID_STATUS_TRANSITION - přechod není povolen nebo podmínka nesplněna.'),
+        },
+    )
     @action(detail=True, methods=['post'])
     def status(self, request, pk=None):
         from .emails import send_order_cancelled_email, send_order_shipped_email
@@ -274,6 +481,19 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         order.refresh_from_db()
         return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Změnit stav platby',
+        description=(
+            '`paymentStatus` nezávisle na `status` objednávky - např. ruční '
+            'potvrzení příchozí platby převodem, aniž by se měnil stav '
+            'objednávky. Frontend může po zaplacení nabídnout i posun '
+            '`status` na PAID, ale server to **sám automaticky neudělá** - '
+            'jsou to dvě oddělené akce.'
+        ),
+        request=AdminPaymentStatusSerializer,
+        responses={200: AdminOrderDetailSerializer},
+    )
     @action(detail=True, methods=['patch'], url_path='payment-status')
     def payment_status(self, request, pk=None):
         order = self.get_object()
@@ -286,6 +506,17 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         order.save(update_fields=['payment_status', 'updated_at'])
         return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Změnit stav zásilky',
+        description=(
+            '`shipmentStatus` a nepovinně `trackingNumber` najednou - typicky '
+            'při vytištění štítku nebo předání dopravci, bez nutnosti měnit '
+            'hlavní `status` objednávky.'
+        ),
+        request=AdminShipmentStatusSerializer,
+        responses={200: AdminOrderDetailSerializer},
+    )
     @action(detail=True, methods=['patch'], url_path='shipment-status')
     def shipment_status(self, request, pk=None):
         order = self.get_object()
@@ -300,6 +531,19 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         order.save()
         return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Znovu odeslat e-mail k objednávce',
+        description=(
+            'Ruční přeposlání jednoho z automatických e-mailů, pro případ že '
+            'zákazník tvrdí, že mu nic nedošlo (spam, překlep v adrese po '
+            'opravě...). `type` je jeden z `ORDER_RECEIVED`, `ORDER_CONFIRMED`, '
+            '`ORDER_SHIPPED`, `ORDER_CANCELLED` - obsah e-mailu se vygeneruje '
+            'z aktuálních dat objednávky, ne z historie.'
+        ),
+        request=AdminResendEmailSerializer,
+        responses={204: OpenApiResponse(description='E-mail znovu odeslán.')},
+    )
     @action(detail=True, methods=['post'], url_path='resend-email')
     def resend_email(self, request, pk=None):
         order = self.get_object()
@@ -309,6 +553,16 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         resend_order_email(order, serializer.validated_data['type'])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Data pro výrobní list (volitelné)',
+        description=(
+            'Podklad pro tisknutelný výrobní list jedné objednávky - aktuálně '
+            'vrací stejná data jako `GET /admin/orders/{id}`; samotné '
+            'generování PDF/tisknutelného formátu je na frontendu.'
+        ),
+        responses={200: AdminOrderDetailSerializer},
+    )
     @action(detail=True, methods=['get'], url_path='print-sheet')
     def print_sheet(self, request, pk=None):
         order = self.get_object()

@@ -2,6 +2,7 @@ import csv
 
 from django.db.models import Count, Max, Q, Sum
 from django.http import HttpResponse
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 from rest_framework import exceptions as drf_exceptions
 from rest_framework import viewsets
 from rest_framework.response import Response
@@ -29,11 +30,47 @@ _ORDERING_MAP = {
 }
 
 
+_TAG = ['Admin - zákazníci']
+
+
+@extend_schema_view(
+    list=extend_schema(
+        tags=_TAG,
+        summary='Seznam zákazníků',
+        description=(
+            'Fulltext `q` hledá v e-mailu, jménu, firmě a telefonu. Filtr '
+            '`marketingConsent` (true/false). Řazení `ordering`: `-createdAt` '
+            '(výchozí), `-ordersCount`, `-totalSpent` (a jejich vzestupné '
+            'varianty bez pomlčky). `ordersCount`, `totalSpent` (součet `total` '
+            'ze VŠECH objednávek zákazníka, i zrušených) a `lastOrderAt` jsou '
+            'počítané v databázi (anotace v querysetu) - žádné N+1 dotazy ani '
+            'při velkém seznamu.'
+        ),
+        parameters=[
+            OpenApiParameter('q', str, OpenApiParameter.QUERY, description='Fulltext: e-mail, jméno, firma, telefon.'),
+            OpenApiParameter('marketingConsent', bool, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter('ordering', str, OpenApiParameter.QUERY, description='-createdAt, -ordersCount, -totalSpent (nebo bez pomlčky pro vzestupné).'),
+        ],
+    ),
+    retrieve=extend_schema(
+        tags=_TAG,
+        summary='Detail zákazníka',
+        description='Kontakt, interní poznámka, souhlas s marketingem, souhrny a seznam objednávek zákazníka.',
+    ),
+    partial_update=extend_schema(
+        tags=_TAG,
+        summary='Upravit zákazníka',
+        description=(
+            'Částečná úprava (PATCH): `phone`, `firstName`, `lastName`, '
+            '`companyName`, `marketingConsent`, `note` smí ADMIN i STAFF. Změna '
+            '`email` je navíc **jen pro ADMIN** (jinak 403) a kontroluje '
+            'unikátnost - pokud už e-mail patří jinému zákazníkovi, vrátí 409 '
+            '`EMAIL_TAKEN`.'
+        ),
+    ),
+)
 class AdminCustomerViewSet(viewsets.ModelViewSet):
-    """/admin/customers - read + limited edit, no delete (orders reference
-    customers via PROTECT; GDPR erasure is a manual ADMIN action, out of
-    scope here per the API guide).
-    """
+    """Zákazníci - evidence pro administraci, bez hesla/účtu."""
     permission_classes = [IsStaffOrAdmin]
     pagination_class = AdminPagination
     http_method_names = ['get', 'patch', 'head', 'options']
@@ -93,9 +130,20 @@ class AdminCustomerViewSet(viewsets.ModelViewSet):
 
 
 class CustomerExportConsentsView(APIView):
-    """GET /customers/export-consents - ADMIN only, CSV of opted-in e-mails."""
+    """Export e-mailů zákazníků se souhlasem s marketingem."""
     permission_classes = [IsAdmin]
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Export e-mailů se souhlasem s marketingem (CSV)',
+        description=(
+            'Jen role ADMIN. Vrátí CSV soubor (ne JSON) s jedním sloupcem `email` - '
+            'jen zákazníci s `marketingConsent: true`. Odpověď má '
+            '`Content-Disposition: attachment`, takže prohlížeč nabídne stažení '
+            'souboru `marketing-consents.csv` místo zobrazení obsahu.'
+        ),
+        responses={200: OpenApiResponse(description='CSV soubor, Content-Type: text/csv.')},
+    )
     def get(self, request):
         response = HttpResponse(content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="marketing-consents.csv"'

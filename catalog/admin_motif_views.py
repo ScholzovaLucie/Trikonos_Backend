@@ -3,6 +3,7 @@ from io import BytesIO
 
 from django.core.files.storage import default_storage
 from django.db.models import Count, ProtectedError
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
 from PIL import Image
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
@@ -28,6 +29,8 @@ from .models import Motif
 THUMBNAIL_MAX_DIMENSIONS = {'small': 400, 'large': 1200}
 _PIL_FORMAT_TO_EXTENSION = {'JPEG': 'jpg', 'PNG': 'png', 'WEBP': 'webp'}
 
+_TAG = ['Admin - motivy']
+
 
 def _make_thumbnail(pil_image, max_dimension, extension):
     thumbnail = pil_image.copy()
@@ -40,10 +43,46 @@ def _make_thumbnail(pil_image, max_dimension, extension):
     return buffer.getvalue()
 
 
+@extend_schema_view(
+    list=extend_schema(
+        tags=_TAG,
+        summary='Seznam motivů (administrace)',
+        description=(
+            'Na rozdíl od veřejného `GET /motifs` vrací VŠECHNY motivy včetně '
+            'neaktivních. Filtry: `category` (id kategorie), `isActive`, `q` '
+            '(fulltext v názvu). Řazení `ordering`: `position` (výchozí), '
+            '`-createdAt`, `name`. Řádek obsahuje `ordersCount` (v kolika '
+            'objednávkách se motiv objevil - orientační, pro rychlý přehled '
+            'popularity v administraci). Čtení smí ADMIN i STAFF.'
+        ),
+    ),
+    retrieve=extend_schema(
+        tags=_TAG,
+        summary='Detail motivu (administrace)',
+        description='Plný detail včetně celého pole `images` (ne jen hlavní obrázek).',
+    ),
+    create=extend_schema(
+        tags=_TAG,
+        summary='Vytvořit motiv',
+        description=(
+            'Jen role ADMIN. `slug` je nepovinný - když chybí, vygeneruje se z '
+            '`name` (musí vyjít unikátní, jinak 400). Nový motiv vznikne bez '
+            'obrázků - ty se nahrávají až následně přes `POST /motifs/{id}/images`.'
+        ),
+    ),
+    partial_update=extend_schema(
+        tags=_TAG,
+        summary='Upravit motiv',
+        description=(
+            'Jen role ADMIN. Částečná úprava (PATCH). **Důležité:** změna `price` '
+            'nijak neovlivní ceny v už existujících objednávkách - cena je v '
+            '`order_items.unit_price` uložená jako snapshot v okamžiku objednání, '
+            'ne odkaz na aktuální cenu motivu.'
+        ),
+    ),
+)
 class AdminMotifViewSet(viewsets.ModelViewSet):
-    """/admin/motifs - CRUD, reorder, and the images sub-resource (upload
-    with generated thumbnails, patch altText/colorId, reorder, delete).
-    """
+    """Motivy v katalogu a jejich fotky."""
     pagination_class = AdminPagination
     http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
     filter_backends = []
@@ -96,6 +135,19 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
         serializer.save()
         return Response(AdminMotifDetailSerializer(motif).data)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Smazat motiv',
+        description=(
+            'Jen role ADMIN. Pokud je motiv použitý v jakékoli objednávce, vrátí '
+            '409 `IN_USE` - použij `isActive: false` místo mazání. Když mazání '
+            'projde, smažou se i všechny soubory fotek (originály i miniatury) z '
+            'úložiště, ne jen záznam z `images` JSON.'
+        ),
+    )
+    def destroy(self, request, *args, **kwargs):
+        return super().destroy(request, *args, **kwargs)
+
     def perform_destroy(self, instance):
         images = list(instance.images or [])
         try:
@@ -109,12 +161,25 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
                 if path:
                     default_storage.delete(path)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Nahrát fotku motivu',
+        description=(
+            'Multipart upload (`file` + nepovinné `altText`, `colorId`). Povolené '
+            'typy JPG, PNG, WEBP, max 10 MB - typ se ověřuje podle skutečného '
+            'obsahu souboru (Pillow), ne podle přípony v názvu. Server vygeneruje '
+            'dvě zmenšeniny (400px a 1200px na delší straně) a uloží je společně s '
+            'originálem pod náhodným názvem. Nový prvek se přidá na konec pole '
+            '`images` a dostane vlastní `id` (UUID), přes které se dá dál '
+            'adresovat (`PATCH`/`DELETE .../images/{imageId}`). **První obrázek v '
+            'poli `images` je vždy ten hlavní** zobrazovaný ve výpisu - pořadí '
+            'měníš přes `POST /motifs/{id}/images/reorder`.'
+        ),
+        request=MotifImageUploadSerializer,
+        responses={201: AdminMotifDetailSerializer},
+    )
     @action(detail=True, methods=['post'])
     def images(self, request, pk=None):
-        """POST /motifs/{id}/images - stores the original plus two
-        thumbnails (400px/1200px), appends one addressable element to the
-        images JSON array.
-        """
         motif = self.get_object()
         serializer = MotifImageUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -157,6 +222,19 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
         motif.save(update_fields=['images', 'updated_at'])
         return Response(AdminMotifDetailSerializer(motif).data, status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Změnit pořadí fotek motivu',
+        description=(
+            'Tělo `{"ids": ["imageId1", "imageId2", ...]}` v požadovaném pořadí - '
+            'přepíše `position` všech uvedených obrázků podle pořadí v seznamu. '
+            '**První id v seznamu se stává hlavním obrázkem.** Pokud pole `images` '
+            'obsahuje obrázky, jejichž id v seznamu nejsou, zařadí se za uvedené, '
+            've svém původním relativním pořadí (neztratí se).'
+        ),
+        request=MotifImageReorderSerializer,
+        responses={200: AdminMotifDetailSerializer},
+    )
     @action(detail=True, methods=['post'], url_path='images/reorder')
     def reorder_images(self, request, pk=None):
         """Registered before update_image/delete_image below so the literal
@@ -188,6 +266,19 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
         motif.save(update_fields=['images', 'updated_at'])
         return Response(AdminMotifDetailSerializer(motif).data)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Upravit popisek/barvu fotky',
+        description=(
+            'Změní `altText` a/nebo `colorId` jednoho obrázku v poli `images`, '
+            'podle jeho `id` (ne indexu v poli). `colorId` musí odkazovat na '
+            'existující barvu, jinak 400. Pro změnu pořadí nebo samotného '
+            'souboru použij `reorder`/nový `POST .../images`, tento endpoint '
+            'mění jen metadata.'
+        ),
+        parameters=[OpenApiParameter('image_id', str, OpenApiParameter.PATH, description='UUID obrázku uvnitř pole images.')],
+        responses={200: AdminMotifDetailSerializer},
+    )
     @action(detail=True, methods=['patch'], url_path=r'images/(?P<image_id>[^/.]+)')
     def update_image(self, request, pk=None, image_id=None):
         motif = self.get_object()
@@ -210,6 +301,17 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
         motif.save(update_fields=['images', 'updated_at'])
         return Response(AdminMotifDetailSerializer(motif).data)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Smazat fotku motivu',
+        description=(
+            'Odebere obrázek z pole `images` podle jeho `id` a smaže i jeho '
+            'soubory z úložiště (originál i obě miniatury) - není to jen smazání '
+            'záznamu, soubor opravdu zmizí.'
+        ),
+        parameters=[OpenApiParameter('image_id', str, OpenApiParameter.PATH, description='UUID obrázku uvnitř pole images.')],
+        responses={204: OpenApiResponse(description='Obrázek a jeho soubory smazány.')},
+    )
     @action(detail=True, methods=['delete'], url_path=r'images/(?P<image_id>[^/.]+)')
     def delete_image(self, request, pk=None, image_id=None):
         motif = self.get_object()
@@ -227,6 +329,17 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
         motif.save(update_fields=['images', 'updated_at'])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @extend_schema(
+        tags=_TAG,
+        summary='Změnit pořadí motivů',
+        description=(
+            'Tělo `{"ids": ["uuid1", "uuid2", ...]}` v požadovaném pořadí - server '
+            'přepíše `position` na 10, 20, 30... podle pořadí v seznamu. Řídí '
+            'výchozí pořadí ve veřejném výpisu `GET /motifs?ordering=position`.'
+        ),
+        request=ReorderSerializer,
+        responses={204: OpenApiResponse(description='Pořadí uloženo.')},
+    )
     @action(detail=False, methods=['post'])
     def reorder(self, request):
         serializer = ReorderSerializer(data=request.data)

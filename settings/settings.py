@@ -97,12 +97,6 @@ REST_FRAMEWORK = {
     'SEARCH_PARAM': 'q',
 }
 
-# djangorestframework-camel-case: accept both snake_case and camelCase on the
-# way in, always render camelCase on the way out.
-JSON_CAMEL_CASE = {
-    'RENDERER_CLASS': 'djangorestframework_camel_case.render.CamelCaseJSONRenderer',
-}
-
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Trikonoš.cz API',
     'DESCRIPTION': 'Veřejné (storefront) a administrační API pro e-shop Trikonoš.cz.',

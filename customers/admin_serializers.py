@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import Customer
@@ -32,6 +33,7 @@ class AdminCustomerDetailSerializer(AdminCustomerListSerializer):
     class Meta(AdminCustomerListSerializer.Meta):
         fields = AdminCustomerListSerializer.Meta.fields + ['note', 'orders']
 
+    @extend_schema_field(AdminCustomerOrderSummarySerializer(many=True))
     def get_orders(self, obj):
         return AdminCustomerOrderSummarySerializer(obj.orders.order_by('-created_at'), many=True).data
 

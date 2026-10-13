@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.git/
+.idea/
+.DS_Store
+media/
+staticfiles/
+.env
+.env.docker
+*.pdf

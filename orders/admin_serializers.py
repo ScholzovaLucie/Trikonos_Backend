@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from accounts.models import StaffRole
@@ -98,7 +99,7 @@ class AdminOrderListSerializer(serializers.ModelSerializer):
             'item_count', 'total', 'currency', 'status', 'payment_status', 'shipment_status', 'has_custom',
         ]
 
-    def get_customer_name(self, obj):
+    def get_customer_name(self, obj) -> str:
         return f'{obj.customer.first_name} {obj.customer.last_name}'.strip()
 
 
@@ -125,6 +126,7 @@ class AdminOrderDetailSerializer(serializers.ModelSerializer):
             'confirmed_at', 'created_at', 'updated_at',
         ]
 
+    @extend_schema_field(AdminOrderAddressSerializer)
     def get_billing(self, obj):
         return AdminOrderAddressSerializer({
             'full_name': obj.billing_full_name, 'company_name': obj.billing_company_name,
@@ -132,6 +134,7 @@ class AdminOrderDetailSerializer(serializers.ModelSerializer):
             'city': obj.billing_city, 'zip': obj.billing_zip, 'country': obj.billing_country,
         }).data
 
+    @extend_schema_field(AdminOrderAddressSerializer)
     def get_shipping(self, obj):
         return AdminOrderAddressSerializer({
             'full_name': obj.shipping_full_name, 'company_name': obj.shipping_company_name,
@@ -139,12 +142,13 @@ class AdminOrderDetailSerializer(serializers.ModelSerializer):
             'city': obj.shipping_city, 'zip': obj.shipping_zip, 'country': obj.shipping_country,
         }).data
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_allowed_transitions(self, obj):
         request = self.context.get('request')
         is_admin_role = bool(request and request.user.role == StaffRole.ADMIN)
         return services.get_allowed_transitions(obj, is_admin=is_admin_role)
 
-    def get_is_locked(self, obj):
+    def get_is_locked(self, obj) -> bool:
         return obj.status not in services.EDITABLE_STATUSES
 
 
@@ -179,6 +183,10 @@ class AdminOrderItemPriceSerializer(serializers.Serializer):
 
 class AdminShippingCostSerializer(serializers.Serializer):
     shipping_cost = serializers.IntegerField(min_value=0)
+
+
+class AdminConfirmOrderSerializer(serializers.Serializer):
+    message = serializers.CharField(required=False, allow_blank=True)
 
 
 class AdminOrderStatusSerializer(serializers.Serializer):

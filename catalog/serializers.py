@@ -29,10 +29,10 @@ class MotifListSerializer(serializers.ModelSerializer):
         model = Motif
         fields = ['id', 'slug', 'name', 'price', 'currency', 'main_image', 'category']
 
-    def get_currency(self, obj):
+    def get_currency(self, obj) -> str:
         return 'CZK'
 
-    def get_main_image(self, obj):
+    def get_main_image(self, obj) -> str | None:
         images = obj.images or []
         return images[0]['url'] if images else None
 
@@ -45,5 +45,48 @@ class MotifDetailSerializer(serializers.ModelSerializer):
         model = Motif
         fields = ['id', 'slug', 'name', 'description', 'price', 'currency', 'images', 'category']
 
-    def get_currency(self, obj):
+    def get_currency(self, obj) -> str:
         return 'CZK'
+
+
+class CatalogOptionPrintAreaSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    width_mm = serializers.IntegerField()
+    height_mm = serializers.IntegerField()
+
+
+class CatalogOptionProductTypeSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    print_areas = CatalogOptionPrintAreaSerializer(many=True)
+
+
+class CatalogOptionCutSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+
+
+class CatalogOptionColorSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    hex_value = serializers.CharField()
+
+
+class CatalogOptionSizeSerializer(serializers.Serializer):
+    value = serializers.CharField()
+    label = serializers.CharField()
+
+
+class CatalogOptionCarrierSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    code = serializers.CharField()
+
+
+class CatalogOptionsResponseSerializer(serializers.Serializer):
+    product_types = CatalogOptionProductTypeSerializer(many=True)
+    cuts = CatalogOptionCutSerializer(many=True)
+    colors = CatalogOptionColorSerializer(many=True)
+    sizes = CatalogOptionSizeSerializer(many=True)
+    carriers = CatalogOptionCarrierSerializer(many=True)

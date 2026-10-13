@@ -1,4 +1,6 @@
 from django.db.models import Sum
+from drf_spectacular.utils import OpenApiParameter, extend_schema
+from rest_framework import serializers
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -8,13 +10,49 @@ from .models import CustomDesignPlacement, OrderItem, OrderStatus
 
 DEFAULT_PRODUCTION_STATUSES = [OrderStatus.PAID, OrderStatus.PROCESSING]
 
+_STATUS_PARAM = OpenApiParameter('status', str, OpenApiParameter.QUERY, description='Čárkou oddělené stavy objednávky.')
+_CREATED_FROM_PARAM = OpenApiParameter('createdFrom', str, OpenApiParameter.QUERY, description='ISO datum.')
+_CREATED_TO_PARAM = OpenApiParameter('createdTo', str, OpenApiParameter.QUERY, description='ISO datum.')
+
+
+class ProductionSummaryRowSerializer(serializers.Serializer):
+    product_type = serializers.CharField()
+    cut = serializers.CharField()
+    color = serializers.CharField()
+    size = serializers.CharField()
+    quantity = serializers.IntegerField()
+
+
+class ProductionPlacementRowSerializer(serializers.Serializer):
+    order_number = serializers.CharField()
+    item_label = serializers.CharField()
+    print_area = serializers.CharField()
+    width = serializers.IntegerField()
+    height = serializers.IntegerField()
+    rotation_deg = serializers.IntegerField()
+    url = serializers.CharField()
+
 
 class ProductionSummaryView(APIView):
-    """GET /production/summary - how many of each type/cut/color/size to
-    produce; doubles as the blank-shirt shopping list.
-    """
+    """Kolik kusů od každé kombinace typ/střih/barva/velikost vyrobit."""
     permission_classes = [IsStaffOrAdmin]
 
+    @extend_schema(
+        tags=['Admin - výroba'],
+        summary='Souhrn kusů k výrobě podle typu/střihu/barvy/velikosti',
+        description=(
+            'Součet `quantity` ze všech položek objednávek seskupený podle '
+            '`productType`/`cut`/`color`/`size` - slouží jako nákupní seznam '
+            'prázdných triček/mikin před tiskem. Filtr `status` (výchozí '
+            '`PAID,PROCESSING` - objednávky, které se už opravdu budou '
+            'vyrábět), `createdFrom`/`createdTo` pro omezení na konkrétní '
+            'období. Zahrnuje jak katalogové, tak vlastní položky - pro '
+            'samotné podklady k vlastnímu potisku použij '
+            '`/production/placements`.'
+        ),
+        parameters=[_STATUS_PARAM, _CREATED_FROM_PARAM, _CREATED_TO_PARAM],
+        responses={200: ProductionSummaryRowSerializer(many=True)},
+    )
     def get(self, request):
         params = request.query_params
         status_param = params.get('status')
@@ -48,10 +86,26 @@ class ProductionSummaryView(APIView):
 
 
 class ProductionPlacementsView(APIView):
-    """GET /production/placements - every custom-print placement to produce,
-    with a link to the uploaded file."""
+    """Seznam umístění vlastního potisku připravených k tisku."""
     permission_classes = [IsStaffOrAdmin]
 
+    @extend_schema(
+        tags=['Admin - výroba'],
+        summary='Podklady k tisku vlastních potisků',
+        description=(
+            'Plochý seznam všech umístění vlastního potisku (napříč '
+            'objednávkami) - číslo objednávky, popisek položky, název '
+            'tiskového bloku, rozměry, rotace a `url` na soubor ke stažení. '
+            'Filtry stejné jako u `/production/summary`, navíc `printArea` '
+            '(id tiskového bloku, pro zobrazení "všechny potisky na záda '
+            'tento týden" apod.).'
+        ),
+        parameters=[
+            _STATUS_PARAM, _CREATED_FROM_PARAM, _CREATED_TO_PARAM,
+            OpenApiParameter('printArea', str, OpenApiParameter.QUERY, description='UUID tiskového bloku.'),
+        ],
+        responses={200: ProductionPlacementRowSerializer(many=True)},
+    )
     def get(self, request):
         params = request.query_params
         queryset = CustomDesignPlacement.objects.select_related(
