@@ -4,36 +4,22 @@ from django.db import models
 
 
 class UUIDModel(models.Model):
+    """UUID primary key, matching `DEFAULT gen_random_uuid()` in the SQL schema."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     class Meta:
         abstract = True
 
 
-class CreatedAtModel(models.Model):
-    created_at = models.DateTimeField(auto_now_add=True)
+class SimpleLookup(UUIDModel):
+    """Shared shape for lookup tables: name/position/is_active."""
+    name = models.CharField(max_length=255, unique=True)
+    position = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
         abstract = True
-
-
-class TimestampedModel(models.Model):
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        abstract = True
-
-
-class ShopSetting(models.Model):
-    """Obecná konfigurace e-shopu (texty, prahy, kontakty) editovatelná bez nasazení."""
-
-    key = models.TextField(primary_key=True)
-    value = models.JSONField()
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = 'shop_settings'
+        ordering = ['position']
 
     def __str__(self):
-        return self.key
+        return self.name

@@ -1,0 +1,11 @@
+Dobrý den,
+
+objednávka {{ order_number }} byla potvrzena.
+{% if total is not None %}Celková cena: {{ total }} {{ currency }}{% endif %}
+{% if shipping_cost is not None %}Doprava: {{ shipping_cost }} {{ currency }}{% endif %}
+{% if bank_account %}Platba převodem na účet {{ bank_account }}, VS {{ variable_symbol }}.{% endif %}
+{% if message %}{{ message }}{% endif %}
+
+Detail objednávky: {{ url }}
+
+{{ shop_name }}

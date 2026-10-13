@@ -1,0 +1,6 @@
+Dobrý den,
+
+objednávka {{ order_number }} byla zrušena.
+Pokud máte dotaz, napište nám na {{ contact_email }}.
+
+{{ shop_name }}

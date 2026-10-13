@@ -5,21 +5,17 @@ from .models import User
 
 
 @admin.register(User)
-class TrikonosUserAdmin(UserAdmin):
+class CustomUserAdmin(UserAdmin):
     model = User
     ordering = ['email']
     list_display = ['email', 'name', 'role', 'is_staff', 'is_active']
-    list_filter = ['role', 'is_staff', 'is_active']
-    search_fields = ['email', 'name']
     fieldsets = (
         (None, {'fields': ('email', 'password')}),
-        ('Osobní údaje', {'fields': ('name',)}),
-        ('Oprávnění', {'fields': ('role', 'is_staff', 'is_active', 'is_superuser', 'groups', 'user_permissions')}),
-        ('Důležitá data', {'fields': ('last_login', 'date_joined')}),
+        ('Personal info', {'fields': ('name', 'role')}),
+        ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
+        ('Important dates', {'fields': ('last_login',)}),
     )
     add_fieldsets = (
-        (None, {
-            'classes': ('wide',),
-            'fields': ('email', 'name', 'role', 'password1', 'password2'),
-        }),
+        (None, {'fields': ('email', 'name', 'role', 'password1', 'password2')}),
     )
+    search_fields = ['email', 'name']

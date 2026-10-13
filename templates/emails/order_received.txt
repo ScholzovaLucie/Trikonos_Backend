@@ -1,0 +1,11 @@
+Dobrý den,
+
+děkujeme za objednávku {{ order_number }}.
+{% if requires_quote %}
+Objednávka obsahuje vlastní potisk, proto vám cenu a dopravu potvrdíme e-mailem po kontrole.
+{% else %}
+Cenu dopravy a finální částku vám pošleme po kontrole objednávky.
+{% endif %}
+Stav objednávky: {{ url }}
+
+{{ shop_name }}

@@ -1,0 +1,3 @@
+Nová objednávka {{ order_number }}{% if has_custom %} (obsahuje vlastní potisk){% endif %}.
+Zákazník: {{ customer_email }}
+Admin: {{ admin_url }}

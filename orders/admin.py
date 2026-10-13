@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Order, OrderItem, OrderStatusHistory
+from .models import CustomDesignPlacement, Order, OrderItem
 
 
 class OrderItemInline(admin.TabularInline):
@@ -8,15 +8,12 @@ class OrderItemInline(admin.TabularInline):
     extra = 0
 
 
-class OrderStatusHistoryInline(admin.TabularInline):
-    model = OrderStatusHistory
-    extra = 0
-    readonly_fields = ['created_at']
-
-
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    list_display = ['order_number', 'customer', 'status', 'total', 'carrier', 'created_at']
-    list_filter = ['status', 'carrier', 'delivery_type']
+    list_display = ['order_number', 'customer', 'status', 'payment_status', 'shipment_status', 'created_at']
+    list_filter = ['status', 'payment_status', 'shipment_status']
     search_fields = ['order_number', 'customer__email']
-    inlines = [OrderItemInline, OrderStatusHistoryInline]
+    inlines = [OrderItemInline]
+
+
+admin.site.register(CustomDesignPlacement)

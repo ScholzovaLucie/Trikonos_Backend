@@ -1,0 +1,13 @@
+{% extends "emails/base.html" %}
+{% block content %}
+<p>Dobrý den,</p>
+<p>děkujeme za objednávku <strong>{{ order_number }}</strong>.</p>
+{% if requires_quote %}
+<p>Objednávka obsahuje vlastní potisk, proto vám cenu a dopravu potvrdíme e-mailem po kontrole.</p>
+{% else %}
+<p>Cenu dopravy a finální částku vám pošleme po kontrole objednávky.</p>
+{% endif %}
+<p style="margin:24px 0;">
+  <a href="{{ url }}" style="background:#111111; color:#ffffff; padding:12px 20px; border-radius:6px; text-decoration:none;">Zobrazit stav objednávky</a>
+</p>
+{% endblock %}

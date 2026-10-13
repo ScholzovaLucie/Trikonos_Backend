@@ -1,0 +1,16 @@
+{% extends "emails/base.html" %}
+{% block content %}
+<p>Dobrý den,</p>
+<p>objednávka <strong>{{ order_number }}</strong> byla potvrzena.</p>
+<ul style="padding-left:18px; color:#333333;">
+  {% if total is not None %}<li>Celková cena: {{ total }} {{ currency }}</li>{% endif %}
+  {% if shipping_cost is not None %}<li>Doprava: {{ shipping_cost }} {{ currency }}</li>{% endif %}
+</ul>
+{% if bank_account %}
+<p>Platba převodem na účet <strong>{{ bank_account }}</strong>, variabilní symbol <strong>{{ variable_symbol }}</strong>.</p>
+{% endif %}
+{% if message %}<p>{{ message }}</p>{% endif %}
+<p style="margin:24px 0;">
+  <a href="{{ url }}" style="background:#111111; color:#ffffff; padding:12px 20px; border-radius:6px; text-decoration:none;">Zobrazit detail objednávky</a>
+</p>
+{% endblock %}

@@ -1,0 +1,9 @@
+Dobrý den,
+
+objednávka {{ order_number }} byla odeslána.
+Dopravce: {{ carrier_name|default:"-" }}
+Sledovací číslo: {{ tracking_number|default:"-" }}
+
+Detail objednávky: {{ url }}
+
+{{ shop_name }}

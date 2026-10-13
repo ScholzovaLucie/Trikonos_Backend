@@ -1,0 +1,271 @@
+// =============================================================================
+// Trikonoš.cz — databázové schéma v16 (DBML)
+// Pro import do https://dbdiagram.io — vygeneruje vizuální ER diagram.
+// Odpovídá schema_v16.sql (12 tabulek). v16 nahrazuje order_items.custom_design_files
+// (JSONB) novou tabulkou custom_design_placements — relační řádky s opravdovým
+// cizím klíčem na print_areas, umožňuje admin reporty napříč objednávkami.
+//
+// Pozn.: DBML nepodporuje CHECK constraints ani triggery.
+// =============================================================================
+
+Project trikonos_db {
+  database_type: 'PostgreSQL'
+  Note: 'Fáze 1 — e-shop Trikonoš.cz. 12 tabulek. Vlastní potisk má umístění jako relační řádky, ne JSONB. Pohoda (Fáze 2) záměrně chybí.'
+}
+
+// -----------------------------------------------------------------------------
+// ENUMY
+// -----------------------------------------------------------------------------
+
+Enum staff_role {
+  ADMIN
+  STAFF
+}
+
+Enum size {
+  S
+  M
+  L
+  XL
+  XXL
+}
+
+Enum order_status {
+  QUOTE_REQUESTED
+  NEW
+  PAID
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+Enum delivery_type {
+  PICKUP_POINT
+  HOME_DELIVERY
+}
+
+Enum payment_method {
+  CASH_ON_DELIVERY
+  BANK_TRANSFER
+  INVOICE
+}
+
+Enum payment_status {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+Enum shipment_status {
+  CREATED
+  LABEL_PRINTED
+  HANDED_OVER
+  IN_TRANSIT
+  DELIVERED
+  RETURNED
+}
+
+// -----------------------------------------------------------------------------
+// ADMINISTRACE
+// -----------------------------------------------------------------------------
+
+Table users {
+  id            uuid [pk, default: `gen_random_uuid()`]
+  email         text [not null, unique]
+  password_hash text [not null]
+  name          text [not null]
+  role          staff_role [not null, default: 'STAFF']
+  created_at    timestamptz [not null, default: `now()`]
+  updated_at    timestamptz [not null, default: `now()`]
+
+  Note: 'Účty administrace (role ADMIN/STAFF) — jen interní, nesouvisí se zákazníky.'
+}
+
+// -----------------------------------------------------------------------------
+// ČÍSELNÍKY
+// -----------------------------------------------------------------------------
+
+Table categories {
+  id        uuid [pk, default: `gen_random_uuid()`]
+  name      text [not null, note: 'Pánská trička, Dámská trička, Mikiny, Doplňky, Kolekce, Týmové akce']
+  slug      text [not null, unique]
+  position  int [not null, default: 0]
+  is_active boolean [not null, default: true]
+}
+
+Table motifs {
+  id          uuid [pk, default: `gen_random_uuid()`]
+  name        text [not null, note: 'Bitcoin, Krkonoše — západ slunce, Medvěd, ...']
+  slug        text [not null, unique]
+  description text
+  price       int [not null, note: 'V haléřích — cena motivu']
+  images      jsonb [not null, default: `'[]'::jsonb`, note: 'Pole objektů { url, altText, position, colorId }; colorId odkazuje na colors.id']
+  category_id uuid [not null, note: 'FK categories.id — PŘEDPOKLAD k ověření, viz plán']
+  position    int [not null, default: 0]
+  is_active   boolean [not null, default: true]
+
+  Note: 'Přebírá roli bývalých products — zákazník vybírá motiv, zbytek (střih/barva/velikost/typ oblečení) si skládá zvlášť na order_items.'
+}
+
+Table colors {
+  id        uuid [pk, default: `gen_random_uuid()`]
+  name      text [not null, unique]
+  hex_value text [not null, note: 'Např. #000000']
+  position  int [not null, default: 0]
+  is_active boolean [not null, default: true]
+}
+
+Table cuts {
+  id        uuid [pk, default: `gen_random_uuid()`]
+  name      text [not null, unique, note: 'Pánské, Dámské, Unisex, Mikina, ...']
+  position  int [not null, default: 0]
+  is_active boolean [not null, default: true]
+}
+
+Table product_types {
+  id        uuid [pk, default: `gen_random_uuid()`]
+  name      text [not null, unique, note: 'Tričko, Mikina, Tílko, Doplněk, ...']
+  position  int [not null, default: 0]
+  is_active boolean [not null, default: true]
+}
+
+Table print_areas {
+  id              uuid [pk, default: `gen_random_uuid()`]
+  product_type_id uuid [not null, note: 'FK product_types.id']
+  name            text [not null, note: 'Přední strana, Zadní strana, Levý rukáv, Pravý rukáv, ...']
+  width_mm        int [not null, note: 'Rozměr tiskové plochy pro editor i tiskárnu']
+  height_mm       int [not null]
+  position        int [not null, default: 0]
+  is_active       boolean [not null, default: true]
+
+  indexes {
+    (product_type_id, name) [unique]
+  }
+
+  Note: 'Definovaná místa pro umístění potisku v editoru vlastního potisku — liší se podle typu oblečení (tričko má rukávy, čepice ne).'
+}
+
+Table carriers {
+  id        uuid [pk, default: `gen_random_uuid()`]
+  name      text [not null, unique, note: 'Zásilkovna, DPD, Česká pošta, ...']
+  code      text [not null, unique, note: 'Interní kód pro integrační vrstvu, např. PACKETA']
+  position  int [not null, default: 0]
+  is_active boolean [not null, default: true]
+
+  Note: 'Bez cen a bez supports_pickup_point/supports_home_delivery — dopravu cení admin ručně per objednávka.'
+}
+
+// -----------------------------------------------------------------------------
+// KLIENTI
+// -----------------------------------------------------------------------------
+
+Table customers {
+  id                 uuid [pk, default: `gen_random_uuid()`]
+  email              text [not null, unique]
+  phone              text
+  first_name         text
+  last_name          text
+  company_name       text [note: 'Pro B2B/týmové poptávky']
+  marketing_consent  boolean [not null, default: false]
+  note               text
+  created_at         timestamptz [not null, default: `now()`]
+  updated_at         timestamptz [not null, default: `now()`]
+
+  Note: 'Evidence zákazníků pro admin (seznam, historie objednávek) — bez hesla/účtu, jen kontaktní záznam dohledaný/založený podle e-mailu.'
+}
+
+// -----------------------------------------------------------------------------
+// OBJEDNÁVKY (včetně dopravy, platby a obou adres)
+// -----------------------------------------------------------------------------
+
+Table orders {
+  id                    uuid [pk, default: `gen_random_uuid()`]
+  order_number          text [not null, unique, note: 'Generováno v appce přes order_number_seq']
+  customer_id           uuid [not null, note: 'FK customers.id']
+  status                order_status [not null, default: 'NEW', note: 'QUOTE_REQUESTED = vlastní potisk/týmová poptávka čeká na cenu od admina']
+  subtotal              int [note: 'V haléřích, NULL dokud není cena stanovena']
+  shipping_cost         int [note: 'NULL dokud není zvolena doprava']
+  total                 int [note: 'NULL dokud není cena stanovena']
+  currency              text [not null, default: 'CZK']
+  carrier_id            uuid
+  delivery_type         delivery_type
+  pickup_point_id       text [note: 'ID výdejního místa (obecné, ne jen Zásilkovna)']
+  pickup_point_name     text
+  tracking_number       text
+  shipment_status       shipment_status [not null, default: 'CREATED']
+  payment_method        payment_method [note: 'CASH_ON_DELIVERY / BANK_TRANSFER / INVOICE']
+  payment_status        payment_status [not null, default: 'PENDING']
+  billing_full_name     text [not null]
+  billing_company_name  text [note: 'Pro B2B/firemní fakturaci']
+  billing_ico           text [note: 'IČO — pro export do Pohody (Fáze 2)']
+  billing_dic           text
+  billing_street        text [not null]
+  billing_city          text [not null]
+  billing_zip           text [not null]
+  billing_country       text [not null, default: 'CZ']
+  shipping_full_name    text [not null]
+  shipping_company_name text
+  shipping_street       text [not null]
+  shipping_city         text [not null]
+  shipping_zip          text [not null]
+  shipping_country      text [not null, default: 'CZ']
+  note                  text
+  created_at            timestamptz [not null, default: `now()`]
+  updated_at            timestamptz [not null, default: `now()`]
+
+  Note: 'Adresa se může lišit objednávka od objednávky, i když je zákazník (customer_id) stále stejný — proto je billing_*/shipping_* tady, ne na customers.'
+}
+
+Table order_items {
+  id                   uuid [pk, default: `gen_random_uuid()`]
+  order_id             uuid [not null]
+  is_custom            boolean [not null, default: false, note: 'true = vlastní potisk, false = jeden katalogový motiv']
+  motif_id             uuid [note: 'FK motifs.id — vždy jen jeden, jen pro is_custom = false']
+  custom_text          text [note: 'Volný text/instrukce k potisku, jen pro custom']
+  product_type_id      uuid [not null, note: 'FK product_types.id — volí zákazník vždy']
+  cut_id               uuid [not null, note: 'FK cuts.id']
+  color_id             uuid [not null, note: 'FK colors.id']
+  size                 size [not null]
+  item_label           text [not null, note: 'Snapshot pro zobrazení/fakturu, např. "Bitcoin / Pánské / Černá / M"']
+  unit_price           int [note: 'Z motifs.price (katalog) nebo NULL, dokud admin necení custom']
+  quantity             int [not null, note: 'CHECK > 0']
+
+  Note: 'Umístění vlastního potisku jsou teď v custom_design_placements, ne tady. CHECK: is_custom = false vyžaduje motif_id; is_custom = true ho zakazuje.'
+}
+
+Table custom_design_placements {
+  id            uuid [pk, default: `gen_random_uuid()`]
+  order_item_id uuid [not null, note: 'FK order_items.id']
+  print_area_id uuid [not null, note: 'FK print_areas.id — skutečný cizí klíč']
+  url           text [not null, note: 'Nahraný soubor od zákazníka']
+  x             int [not null, default: 0, note: 'Pozice/rozměr v rámci bloku, ve stejné jednotce jako print_areas.width_mm/height_mm']
+  y             int [not null, default: 0]
+  width         int [not null, note: 'CHECK > 0']
+  height        int [not null, note: 'CHECK > 0']
+  rotation_deg  int [not null, default: 0]
+  created_at    timestamptz [not null, default: `now()`]
+
+  Note: 'Jedna custom položka může mít víc řádků zde. Trigger hlídá, že print_area_id patří ke stejnému product_type_id jako order_item.'
+}
+
+// -----------------------------------------------------------------------------
+// VZTAHY
+// -----------------------------------------------------------------------------
+
+Ref: motifs.category_id > categories.id
+Ref: print_areas.product_type_id > product_types.id
+
+Ref: orders.customer_id > customers.id
+Ref: orders.carrier_id > carriers.id
+
+Ref: order_items.order_id > orders.id [delete: cascade]
+Ref: order_items.motif_id > motifs.id
+Ref: order_items.product_type_id > product_types.id
+Ref: order_items.cut_id > cuts.id
+Ref: order_items.color_id > colors.id
+
+Ref: custom_design_placements.order_item_id > order_items.id [delete: cascade]
+Ref: custom_design_placements.print_area_id > print_areas.id

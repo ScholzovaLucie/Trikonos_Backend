@@ -1,0 +1,8 @@
+{% extends "emails/base.html" %}
+{% block content %}
+<p>Nová objednávka <strong>{{ order_number }}</strong>{% if has_custom %} (obsahuje vlastní potisk){% endif %}.</p>
+<p>Zákazník: {{ customer_email }}</p>
+<p style="margin:24px 0;">
+  <a href="{{ admin_url }}" style="background:#111111; color:#ffffff; padding:12px 20px; border-radius:6px; text-decoration:none;">Otevřít v administraci</a>
+</p>
+{% endblock %}

@@ -49,20 +49,72 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
+    'django_filters',
+    'corsheaders',
+    'drf_spectacular',
     'core',
     'accounts',
     'catalog',
     'customers',
     'shipping',
     'orders',
-    'payments',
-    'pohoda',
 ]
 
 AUTH_USER_MODEL = 'accounts.User'
 
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'djangorestframework_camel_case.render.CamelCaseJSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
+    ],
+    'DEFAULT_PARSER_CLASSES': [
+        'djangorestframework_camel_case.parser.CamelCaseJSONParser',
+        'djangorestframework_camel_case.parser.CamelCaseFormParser',
+        'djangorestframework_camel_case.parser.CamelCaseMultiPartParser',
+    ],
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.OrderingFilter',
+        'rest_framework.filters.SearchFilter',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'core.pagination.StorefrontPagination',
+    'EXCEPTION_HANDLER': 'core.exceptions.custom_exception_handler',
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'public-write': '10/min',
+        'login': '5/min',
+    },
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'SEARCH_PARAM': 'q',
+}
+
+# djangorestframework-camel-case: accept both snake_case and camelCase on the
+# way in, always render camelCase on the way out.
+JSON_CAMEL_CASE = {
+    'RENDERER_CLASS': 'djangorestframework_camel_case.render.CamelCaseJSONRenderer',
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Trikonoš.cz API',
+    'DESCRIPTION': 'Veřejné (storefront) a administrační API pro e-shop Trikonoš.cz.',
+    'VERSION': 'v1',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'SCHEMA_PATH_PREFIX': '/api/v1/',
+    'CAMELIZE_NAMES': True,
+}
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -70,6 +122,57 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+# CORS / CSRF - only the storefront origins listed in env may call the API
+# with credentials (admin session cookie).
+FRONTEND_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get('FRONTEND_ORIGINS', '').split(',')
+    if origin.strip()
+]
+CORS_ALLOWED_ORIGINS = FRONTEND_ORIGINS
+CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = FRONTEND_ORIGINS
+
+# Session cookie carries the admin login; CSRF cookie must stay readable by
+# frontend JS so it can be echoed back in the X-CSRFToken header. Cross-site
+# frontend deployments (different domain than the API) need SameSite=None
+# (only valid together with Secure=True) - set via env, defaults to same-site.
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = False
+SESSION_COOKIE_SAMESITE = os.environ.get('COOKIE_SAMESITE', 'Lax')
+CSRF_COOKIE_SAMESITE = os.environ.get('COOKIE_SAMESITE', 'Lax')
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
+# Shop configuration without its own DB table (GET /config, confirmation
+# e-mails) - all values come from env, see .env.example.
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+SHOP_CONFIG = {
+    'NAME': os.environ.get('SHOP_NAME', 'Trikonoš.cz'),
+    'CONTACT_EMAIL': os.environ.get('SHOP_CONTACT_EMAIL', ''),
+    'CONTACT_PHONE': os.environ.get('SHOP_CONTACT_PHONE', ''),
+    'INSTAGRAM_URL': os.environ.get('SHOP_INSTAGRAM_URL', ''),
+    'BANK_ACCOUNT': os.environ.get('SHOP_BANK_ACCOUNT', ''),
+    'TOPBAR_TEXT': os.environ.get('SHOP_TOPBAR_TEXT', ''),
+    'NOTIFY_EMAIL': os.environ.get('SHOP_NOTIFY_EMAIL', ''),
+}
+
+# Email - console backend in dev so nothing silently fails to send; point
+# EMAIL_BACKEND at django.core.mail.backends.smtp.EmailBackend in production.
+EMAIL_BACKEND = os.environ.get(
+    'EMAIL_BACKEND',
+    'django.core.mail.backends.console.EmailBackend' if DEBUG else 'django.core.mail.backends.smtp.EmailBackend',
+)
+EMAIL_HOST = os.environ.get('EMAIL_HOST', '')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', SHOP_CONFIG['NOTIFY_EMAIL'])
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 ROOT_URLCONF = 'settings.urls'
 
@@ -129,7 +232,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'cs'
 
 TIME_ZONE = 'UTC'
 

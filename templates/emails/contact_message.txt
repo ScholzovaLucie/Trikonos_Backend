@@ -1,0 +1,8 @@
+Nová zpráva z kontaktního formuláře.
+
+Jméno: {{ name }}
+E-mail: {{ email }}
+{% if phone %}Telefon: {{ phone }}{% endif %}
+{% if company %}Firma: {{ company }}{% endif %}
+
+{{ message }}

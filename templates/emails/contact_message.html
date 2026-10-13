@@ -1,0 +1,11 @@
+{% extends "emails/base.html" %}
+{% block content %}
+<p>Nová zpráva z kontaktního formuláře.</p>
+<p>
+  Jméno: {{ name }}<br>
+  E-mail: {{ email }}<br>
+  {% if phone %}Telefon: {{ phone }}<br>{% endif %}
+  {% if company %}Firma: {{ company }}<br>{% endif %}
+</p>
+<p>{{ message }}</p>
+{% endblock %}

@@ -1,0 +1,6 @@
+{% extends "emails/base.html" %}
+{% block content %}
+<p>Dobrý den,</p>
+<p>objednávka <strong>{{ order_number }}</strong> byla zrušena.</p>
+<p>Pokud máte dotaz, napište nám na {{ contact_email }}.</p>
+{% endblock %}
