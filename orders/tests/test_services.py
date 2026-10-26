@@ -6,7 +6,7 @@ from core.exceptions import BusinessError, InvalidStatusTransitionError, OrderLo
 from customers.models import Customer
 from orders import services
 from orders.models import DeliveryType, Order, OrderStatus, PaymentMethod, PaymentStatus
-from shipping.models import ShippingPrice, ShippingQuantityDiscount
+from shipping.models import CodSurcharge, ShippingPrice, ShippingQuantityDiscount
 
 pytestmark = pytest.mark.django_db
 
@@ -464,3 +464,218 @@ def test_personal_pickup_is_always_free_without_any_configured_price(motif, prod
 
     assert order.shipping_cost == 0
     assert order.total == motif.price
+
+
+# ---------------------------------------------------------------------------
+# COD surcharge.
+# ---------------------------------------------------------------------------
+
+def test_cod_surcharge_added_to_shipping_cost_for_cash_on_delivery(motif, product_type, cut, color, carrier):
+    ShippingPrice.objects.create(carrier=carrier, delivery_type=DeliveryType.HOME_DELIVERY, price=5000)
+    CodSurcharge.objects.update_or_create(pk=1, defaults={'amount': 2000})
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+
+    order = _make_order(
+        items, payment_method=PaymentMethod.CASH_ON_DELIVERY, delivery_data=_home_delivery(carrier),
+    )
+
+    assert order.shipping_cost == 7000  # 5000 base + 2000 surcharge
+
+
+def test_cod_surcharge_not_applied_to_other_payment_methods(motif, product_type, cut, color, carrier):
+    ShippingPrice.objects.create(carrier=carrier, delivery_type=DeliveryType.HOME_DELIVERY, price=5000)
+    CodSurcharge.objects.update_or_create(pk=1, defaults={'amount': 2000})
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+
+    order = _make_order(
+        items, payment_method=PaymentMethod.BANK_TRANSFER, delivery_data=_home_delivery(carrier),
+    )
+
+    assert order.shipping_cost == 5000
+
+
+def test_cod_surcharge_never_applies_to_personal_pickup(motif, product_type, cut, color):
+    CodSurcharge.objects.update_or_create(pk=1, defaults={'amount': 2000})
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+
+    order = _make_order(
+        items, payment_method=PaymentMethod.CASH_ON_DELIVERY, delivery_data=_personal_pickup(),
+    )
+
+    assert order.shipping_cost == 0
+
+
+# ---------------------------------------------------------------------------
+# shipping_cost_manual - set_shipping_cost / reset_shipping_cost, and
+# quantity changes recalculating (or not) the automatic price.
+# ---------------------------------------------------------------------------
+
+def test_set_shipping_cost_marks_manual_and_survives_quantity_change(motif, product_type, cut, color, carrier):
+    shipping_price = ShippingPrice.objects.create(carrier=carrier, delivery_type=DeliveryType.HOME_DELIVERY, price=5000)
+    ShippingQuantityDiscount.objects.create(shipping_price=shipping_price, min_quantity=10, discount_percent=100)
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+    order = _make_order(items, delivery_data=_home_delivery(carrier))
+    assert order.shipping_cost == 5000
+    assert order.shipping_cost_manual is False
+
+    services.set_shipping_cost(order, 999)
+    order.refresh_from_db()
+    assert order.shipping_cost == 999
+    assert order.shipping_cost_manual is True
+
+    item = order.items.get()
+    services.update_item_pricing(order, item, quantity=10)  # would cross the 100% discount tier
+    order.refresh_from_db()
+    assert order.shipping_cost == 999  # untouched - manual override wins
+
+
+def test_reset_shipping_cost_reverts_to_automatic(motif, product_type, cut, color, carrier):
+    ShippingPrice.objects.create(carrier=carrier, delivery_type=DeliveryType.HOME_DELIVERY, price=5000)
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+    order = _make_order(items, delivery_data=_home_delivery(carrier))
+    services.set_shipping_cost(order, 999)
+    order.refresh_from_db()
+
+    services.reset_shipping_cost(order)
+    order.refresh_from_db()
+
+    assert order.shipping_cost_manual is False
+    assert order.shipping_cost == 5000
+    assert order.total == motif.price + 5000
+
+
+def test_quantity_change_recalculates_automatic_shipping_cost(motif, product_type, cut, color, carrier):
+    shipping_price = ShippingPrice.objects.create(carrier=carrier, delivery_type=DeliveryType.HOME_DELIVERY, price=5000)
+    ShippingQuantityDiscount.objects.create(shipping_price=shipping_price, min_quantity=10, discount_percent=100)
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+    order = _make_order(items, delivery_data=_home_delivery(carrier))
+    assert order.shipping_cost == 5000
+
+    item = order.items.get()
+    services.update_item_pricing(order, item, quantity=10)
+    order.refresh_from_db()
+
+    assert order.shipping_cost == 0  # crossed into the free-shipping tier
+    assert order.shipping_cost_manual is False
+
+
+# ---------------------------------------------------------------------------
+# Payment status transitions - independent of order status, but still
+# constrained to meaningful transitions and roles.
+# ---------------------------------------------------------------------------
+
+def test_payment_status_valid_transition(motif, product_type, cut, color):
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+    order = _make_order(items)
+    services.set_shipping_cost(order, 0)
+    order.refresh_from_db()
+
+    services.transition_payment_status(order, PaymentStatus.PAID, is_admin=True)
+    order.refresh_from_db()
+    assert order.payment_status == PaymentStatus.PAID
+
+
+def test_payment_status_invalid_transition_rejected(motif, product_type, cut, color):
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+    order = _make_order(items)
+    services.set_shipping_cost(order, 0)
+    order.refresh_from_db()
+
+    with pytest.raises(InvalidStatusTransitionError):
+        services.transition_payment_status(order, PaymentStatus.REFUNDED, is_admin=True)  # PENDING -> REFUNDED, no such edge
+
+
+def test_payment_status_paid_requires_admin(motif, product_type, cut, color):
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+    order = _make_order(items)
+    services.set_shipping_cost(order, 0)
+    order.refresh_from_db()
+
+    with pytest.raises(PermissionDenied):
+        services.transition_payment_status(order, PaymentStatus.PAID, is_admin=False)
+
+
+def test_payment_status_paid_requires_total_set(motif, product_type, cut, color, print_area):
+    items = [{
+        'is_custom': True, 'motif': None, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'L', 'quantity': 1,
+        'placements': [{
+            'print_area': print_area, 'url': 'x', 'x': 0, 'y': 0, 'width': 100, 'height': 100, 'rotation_deg': 0,
+        }],
+    }]
+    order = _make_order(items)  # custom item, never priced -> total stays None
+
+    with pytest.raises(BusinessError):
+        services.transition_payment_status(order, PaymentStatus.PAID, is_admin=True)
+
+
+def test_payment_status_cannot_change_on_cancelled_order(motif, product_type, cut, color):
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+    order = _make_order(items)
+    services.set_shipping_cost(order, 0)
+    order.refresh_from_db()
+    services.transition_order_status(order, OrderStatus.CANCELLED, is_admin=False)
+    order.refresh_from_db()
+
+    with pytest.raises(InvalidStatusTransitionError):
+        services.transition_payment_status(order, PaymentStatus.FAILED, is_admin=True)
+
+
+# ---------------------------------------------------------------------------
+# QUOTE_REQUESTED -> NEW must only happen through confirm_order, not the
+# generic status transition.
+# ---------------------------------------------------------------------------
+
+def test_quote_requested_to_new_blocked_via_generic_status_transition(product_type, cut, color, print_area):
+    items = [{
+        'is_custom': True, 'motif': None, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'L', 'quantity': 1,
+        'placements': [{
+            'print_area': print_area, 'url': 'x', 'x': 0, 'y': 0, 'width': 100, 'height': 100, 'rotation_deg': 0,
+        }],
+    }]
+    order = _make_order(items)
+    item = order.items.get()
+    services.update_item_pricing(order, item, unit_price=10000)
+    services.set_shipping_cost(order, 0)
+    order.refresh_from_db()
+    assert order.status == OrderStatus.QUOTE_REQUESTED
+
+    with pytest.raises(InvalidStatusTransitionError):
+        services.transition_order_status(order, OrderStatus.NEW, is_admin=True)
+
+    # /confirm is still the correct, working path for the same transition.
+    services.confirm_order(order)
+    order.refresh_from_db()
+    assert order.status == OrderStatus.NEW
+    assert order.confirmed_at is not None

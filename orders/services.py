@@ -232,19 +232,26 @@ def recalculate_totals(order):
 def _apply_automatic_shipping_cost(order, *, total_quantity):
     """Fills Order.shipping_cost from the admin-managed price for this
     order's (carrier, delivery_type) pair (shipping.services.
-    calculate_shipping_cost) at order creation time. Unlike item pricing,
+    calculate_shipping_cost) - at order creation time, and again whenever
+    item quantity changes (see update_item_pricing). Unlike item pricing,
     this only depends on total item quantity, not unit prices - it applies
     even to a QUOTE_REQUESTED order where some items still await admin
-    pricing. Leaves shipping_cost NULL if admin hasn't configured a price
-    for this pair yet, same as before this feature existed. An
-    admin-supplied shippingCost on manual order creation is applied by the
-    caller (OrderCreateSerializer.create) right after this and overrides
-    whatever this sets.
+    pricing. No-op once admin has set shipping_cost by hand
+    (shipping_cost_manual) - see set_shipping_cost/reset_shipping_cost.
+    Leaves shipping_cost NULL if admin hasn't configured a price for this
+    pair yet, same as before this feature existed. An admin-supplied
+    shippingCost on manual order creation is applied by the caller
+    (OrderCreateSerializer.create) right after order creation and
+    overrides whatever this sets.
     """
+    if order.shipping_cost_manual:
+        return
+
     from shipping.services import calculate_shipping_cost
 
     cost = calculate_shipping_cost(
-        carrier=order.carrier, delivery_type=order.delivery_type, total_quantity=total_quantity,
+        carrier=order.carrier, delivery_type=order.delivery_type,
+        payment_method=order.payment_method, total_quantity=total_quantity,
     )
     if cost is not None:
         order.shipping_cost = cost
@@ -257,12 +264,22 @@ def _apply_automatic_shipping_cost(order, *, total_quantity):
 # ---------------------------------------------------------------------------
 
 @transaction.atomic
-def create_order(*, customer_data, billing_data, shipping_data, delivery_data, payment_method, note, items_data):
+def create_order(
+    *, customer_data, billing_data, shipping_data, delivery_data, payment_method, note, items_data, order_id=None,
+):
+    """`order_id`, if given, becomes the order's primary key instead of a
+    random UUID - lets a caller make creation idempotent (see
+    OrderCreateSerializer: a retried request with the same order_id must
+    not create a second order). Raises IntegrityError if that id is
+    already taken (handled by the caller, which re-fetches instead of
+    treating it as a real error).
+    """
     customer = get_or_create_customer(customer_data)
 
     has_custom_item = any(item['is_custom'] for item in items_data)
     status = OrderStatus.QUOTE_REQUESTED if has_custom_item else OrderStatus.NEW
 
+    order_kwargs = {'id': order_id} if order_id is not None else {}
     order = Order.objects.create(
         order_number=generate_order_number(),
         customer=customer,
@@ -270,6 +287,7 @@ def create_order(*, customer_data, billing_data, shipping_data, delivery_data, p
         currency='CZK',
         payment_method=payment_method,
         note=note or '',
+        **order_kwargs,
         **billing_data,
         **shipping_data,
         **delivery_data,
@@ -316,6 +334,7 @@ def update_item_pricing(order, item, *, unit_price=UNSET, quantity=UNSET):
     "awaiting quote" without that being indistinguishable from "not passed".
     """
     ensure_order_editable(order)
+    quantity_changed = quantity is not UNSET and quantity != item.quantity
     if unit_price is not UNSET:
         item.unit_price = unit_price
     if quantity is not UNSET:
@@ -327,6 +346,12 @@ def update_item_pricing(order, item, *, unit_price=UNSET, quantity=UNSET):
         item.quantity = quantity
     item.save()
     recalculate_totals(order)
+    if quantity_changed:
+        # Total item quantity across the order may have crossed a discount
+        # threshold - re-derive shipping_cost the same way order creation
+        # does (no-op if admin set it by hand, see _apply_automatic_shipping_cost).
+        total_quantity = sum(order_item.quantity for order_item in order.items.all())
+        _apply_automatic_shipping_cost(order, total_quantity=total_quantity)
     _unconfirm_if_confirmed(order)
     return item
 
@@ -334,7 +359,25 @@ def update_item_pricing(order, item, *, unit_price=UNSET, quantity=UNSET):
 def set_shipping_cost(order, shipping_cost):
     ensure_order_editable(order)
     order.shipping_cost = shipping_cost
-    order.save(update_fields=['shipping_cost', 'updated_at'])
+    order.shipping_cost_manual = True
+    order.save(update_fields=['shipping_cost', 'shipping_cost_manual', 'updated_at'])
+    recalculate_totals(order)
+    _unconfirm_if_confirmed(order)
+    return order
+
+
+def reset_shipping_cost(order):
+    """DELETE /admin/orders/{id}/shipping-cost. Reverts a manual override
+    back to the automatic price for this order's (carrier, delivery_type)
+    and current item quantity - same price a brand new equivalent order
+    would get right now, not whatever it was at creation time.
+    """
+    ensure_order_editable(order)
+    order.shipping_cost_manual = False
+    order.shipping_cost = None
+    order.save(update_fields=['shipping_cost', 'shipping_cost_manual', 'updated_at'])
+    total_quantity = sum(item.quantity for item in order.items.all())
+    _apply_automatic_shipping_cost(order, total_quantity=total_quantity)
     recalculate_totals(order)
     _unconfirm_if_confirmed(order)
     return order
@@ -368,10 +411,6 @@ class StatusTransition:
     condition_message: str = ''
 
 
-def _all_items_priced(order):
-    return all(item.unit_price is not None for item in order.items.all())
-
-
 def _total_is_set(order):
     return order.total is not None
 
@@ -390,10 +429,10 @@ def _carrier_and_delivery_set(order):
 # gettext_lazy (resolved on access/str(), not at import time) rather than the
 # eager gettext used everywhere else in this module.
 TRANSITIONS = [
-    StatusTransition(
-        OrderStatus.QUOTE_REQUESTED, OrderStatus.NEW,
-        condition=_all_items_priced, condition_message=gettext_lazy('All items must have a price set.'),
-    ),
+    # QUOTE_REQUESTED -> NEW deliberately has NO entry here - it must only
+    # happen through confirm_order() (POST /orders/{id}/confirm), which
+    # always sets confirmed_at and sends the price e-mail. Going through
+    # the generic /status endpoint would skip both.
     StatusTransition(OrderStatus.QUOTE_REQUESTED, OrderStatus.CANCELLED),
     StatusTransition(OrderStatus.NEW, OrderStatus.CANCELLED),
     StatusTransition(
@@ -489,6 +528,45 @@ def transition_order_status(order, target_status, *, is_admin):
         order.payment_status = PaymentStatus.REFUNDED
 
     order.save()
+    return order
+
+
+# ---------------------------------------------------------------------------
+# Payment status - independent of order status (e.g. admin manually
+# confirming an incoming bank transfer), but still constrained to
+# meaningful transitions and roles so it can't drift out of sync.
+# ---------------------------------------------------------------------------
+
+_PAYMENT_STATUS_TRANSITIONS = {
+    (PaymentStatus.PENDING, PaymentStatus.PAID),
+    (PaymentStatus.PENDING, PaymentStatus.FAILED),
+    (PaymentStatus.FAILED, PaymentStatus.PENDING),
+    (PaymentStatus.FAILED, PaymentStatus.PAID),
+    (PaymentStatus.PAID, PaymentStatus.REFUNDED),
+}
+# Marking something as actually paid or reversing a payment are the two
+# mistakes with real money consequences - same ADMIN-only bar as REFUNDED
+# on the order status machine above.
+_PAYMENT_STATUS_ADMIN_ONLY_TARGETS = {PaymentStatus.PAID, PaymentStatus.REFUNDED}
+
+
+def transition_payment_status(order, target_status, *, is_admin):
+    if order.status in (OrderStatus.CANCELLED, OrderStatus.REFUNDED):
+        raise InvalidStatusTransitionError(
+            _('Payment status cannot change on a cancelled or refunded order.'),
+        )
+    if (order.payment_status, target_status) not in _PAYMENT_STATUS_TRANSITIONS:
+        raise InvalidStatusTransitionError(
+            _('Transition from payment status %(source)s to %(target)s is not allowed.')
+            % {'source': order.payment_status, 'target': target_status}
+        )
+    if target_status in _PAYMENT_STATUS_ADMIN_ONLY_TARGETS and not is_admin:
+        raise drf_exceptions.PermissionDenied(_('Only the ADMIN role may perform this action.'))
+    if target_status == PaymentStatus.PAID and order.total is None:
+        raise BusinessError(_('The order does not have a total price set.'), code='ORDER_NOT_PRICED')
+
+    order.payment_status = target_status
+    order.save(update_fields=['payment_status', 'updated_at'])
     return order
 
 

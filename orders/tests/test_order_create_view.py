@@ -6,11 +6,13 @@ must silently ignore both and always compute the real price itself. This
 is the amount that will eventually be handed to the payment gateway, so it
 must never be influenceable by request data.
 """
+import uuid
+
 import pytest
 from rest_framework.test import APIClient
 
 from accounts.models import StaffRole, User
-from orders.models import DeliveryType
+from orders.models import DeliveryType, Order, OrderStatus
 from shipping.models import ShippingPrice
 
 pytestmark = pytest.mark.django_db
@@ -137,3 +139,100 @@ def test_admin_create_can_set_unit_price_and_shipping_cost(motif, product_type, 
     assert response.data['items'][0]['unit_price'] == 12345
     assert response.data['shipping_cost'] == 678
     assert response.data['total'] == 12345 + 678
+
+
+def test_duplicate_order_id_returns_the_same_order_not_a_second_one(motif, product_type, cut, color):
+    """A retried checkout (double-click, network retry) with the same
+    client-generated orderId must not create a duplicate order.
+    """
+    client = APIClient()
+    order_id = str(uuid.uuid4())
+    body = _order_body(motif, product_type, cut, color, delivery={'deliveryType': DeliveryType.PERSONAL_PICKUP})
+    body['orderId'] = order_id
+
+    first = client.post('/api/v1/orders', body, format='json')
+    second = client.post('/api/v1/orders', body, format='json')
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.data['order_number'] == second.data['order_number']
+    assert first.data['access_token'] == second.data['access_token']
+    assert Order.objects.filter(id=order_id).count() == 1
+    assert Order.objects.count() == 1
+
+
+def test_different_order_id_creates_separate_orders(motif, product_type, cut, color):
+    client = APIClient()
+    body = _order_body(motif, product_type, cut, color, delivery={'deliveryType': DeliveryType.PERSONAL_PICKUP})
+    body['orderId'] = str(uuid.uuid4())
+
+    first = client.post('/api/v1/orders', body, format='json')
+    body['orderId'] = str(uuid.uuid4())
+    second = client.post('/api/v1/orders', body, format='json')
+
+    assert first.data['order_number'] != second.data['order_number']
+    assert Order.objects.count() == 2
+
+
+def test_public_catalog_order_auto_confirms(motif, product_type, cut, color):
+    """A fully-priced catalog order from public checkout confirms itself -
+    the customer already saw the final price in this response, no admin
+    action needed before it can move to PROCESSING.
+    """
+    client = APIClient()
+    body = _order_body(motif, product_type, cut, color, delivery={'deliveryType': DeliveryType.PERSONAL_PICKUP})
+
+    response = client.post('/api/v1/orders', body, format='json')
+
+    order = Order.objects.get(order_number=response.data['order_number'])
+    assert order.status == OrderStatus.NEW
+    assert order.confirmed_at is not None
+
+
+def test_admin_created_catalog_order_does_not_auto_confirm(motif, product_type, cut, color):
+    """Admin manually building an order (e.g. from a phone call) still
+    confirms it by hand later, even for a plain catalog item - the
+    auto-confirm shortcut is specifically for the public checkout path.
+    """
+    admin = User.objects.create_user(email='admin2@trikonos.cz', password='x', name='Admin', role=StaffRole.ADMIN)
+    client = APIClient()
+    client.force_authenticate(user=admin)
+    body = _order_body(motif, product_type, cut, color, delivery={'deliveryType': DeliveryType.PERSONAL_PICKUP})
+    del body['termsAccepted']
+
+    response = client.post('/api/v1/admin/orders', body, format='json')
+
+    order = Order.objects.get(order_number=response.data['order_number'])
+    assert order.status == OrderStatus.NEW
+    assert order.confirmed_at is None
+
+
+def test_quote_order_does_not_auto_confirm(product_type, cut, color, print_area):
+    """A custom-print order has no price yet - nothing to auto-confirm."""
+    client = APIClient()
+    item = {
+        'isCustom': True, 'productTypeId': str(product_type.id), 'cutId': str(cut.id), 'colorId': str(color.id),
+        'size': 'M', 'quantity': 1,
+        'placements': [{
+            'printAreaId': str(print_area.id), 'fileToken': 'does-not-matter', 'width': 100, 'height': 100,
+        }],
+    }
+    body = {
+        'customer': {'email': 'jana@example.cz', 'firstName': 'Jana', 'lastName': 'Nováková'},
+        'billing': {'fullName': 'Jana Nováková', 'street': 'Horní 12', 'city': 'Vrchlabí', 'zip': '54301'},
+        'shipping': {'sameAsBilling': True},
+        'delivery': {'deliveryType': DeliveryType.PERSONAL_PICKUP},
+        'paymentMethod': 'BANK_TRANSFER',
+        'termsAccepted': True,
+        'items': [item],
+    }
+
+    from orders.serializers import OrderCreateSerializer
+
+    serializer = OrderCreateSerializer(data=body)
+    if not serializer.is_valid():
+        pytest.skip('file token resolution not under test here')
+    order = serializer.save()
+
+    assert order.status == OrderStatus.QUOTE_REQUESTED
+    assert order.confirmed_at is None

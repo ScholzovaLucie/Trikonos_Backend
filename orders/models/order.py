@@ -24,6 +24,11 @@ class Order(UUIDModel):
     # Pricing - nullable until set (custom print waits on admin pricing)
     subtotal = models.PositiveIntegerField(null=True, blank=True, help_text='In haléře')
     shipping_cost = models.PositiveIntegerField(null=True, blank=True)
+    shipping_cost_manual = models.BooleanField(
+        default=False,
+        help_text='True once admin overrides shipping_cost by hand - stops it from being '
+                  'recalculated automatically (e.g. on a quantity change) until reset.',
+    )
     total = models.PositiveIntegerField(null=True, blank=True)
     currency = models.CharField(max_length=3, default='CZK')
 

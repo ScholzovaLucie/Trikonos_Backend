@@ -1,4 +1,5 @@
 from drf_spectacular.utils import extend_schema_field
+from django.db import IntegrityError
 from django.utils.translation import gettext as _
 from rest_framework import serializers
 
@@ -7,7 +8,7 @@ from core.tokens import resolve_file_token
 from shipping.models import Carrier
 
 from . import services
-from .models import DeliveryType, OrderStatus, PaymentMethod, Size
+from .models import DeliveryType, Order, OrderStatus, PaymentMethod, Size
 
 
 class CustomerInputSerializer(serializers.Serializer):
@@ -139,6 +140,9 @@ class CartValidateSerializer(serializers.Serializer):
         source='carrier', queryset=Carrier.objects.filter(is_active=True), required=False, allow_null=True,
     )
     delivery_type = serializers.ChoiceField(choices=DeliveryType.choices, required=False, allow_null=True)
+    # Optional - without it, shippingCost preview excludes the COD surcharge
+    # (shown as if paying some other way) since the method isn't known yet.
+    payment_method = serializers.ChoiceField(choices=PaymentMethod.choices, required=False, allow_null=True)
 
 
 class OrderCreateSerializer(serializers.Serializer):
@@ -155,6 +159,12 @@ class OrderCreateSerializer(serializers.Serializer):
     terms_accepted = serializers.BooleanField(required=False, default=False)
     items = OrderItemInputSerializer(many=True)
     shipping_cost = serializers.IntegerField(required=False, allow_null=True, default=None)
+    # Client-generated UUID, set once per checkout attempt (e.g. when the
+    # checkout page loads) - a retried/double-submitted request with the
+    # same id returns the order already created by the first one instead
+    # of creating a duplicate. Optional: omitting it just means no
+    # double-submit protection for that request.
+    order_id = serializers.UUIDField(required=False)
 
     def validate(self, attrs):
         is_admin = self.context.get('is_admin', False)
@@ -199,6 +209,13 @@ class OrderCreateSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         is_admin = self.context.get('is_admin', False)
+        order_id = validated_data.get('order_id')
+
+        if order_id is not None:
+            existing = Order.objects.filter(pk=order_id).first()
+            if existing is not None:
+                return existing
+
         billing = validated_data['billing']
 
         billing_data = {
@@ -223,19 +240,37 @@ class OrderCreateSerializer(serializers.Serializer):
         }
         items_data = [OrderItemInputSerializer.to_service_item(item) for item in validated_data['items']]
 
-        order = services.create_order(
-            customer_data=validated_data['customer'],
-            billing_data=billing_data,
-            shipping_data=validated_data['_shipping_resolved'],
-            delivery_data=delivery_data,
-            payment_method=validated_data['payment_method'],
-            note=validated_data.get('note', ''),
-            items_data=items_data,
-        )
+        try:
+            order = services.create_order(
+                customer_data=validated_data['customer'],
+                billing_data=billing_data,
+                shipping_data=validated_data['_shipping_resolved'],
+                delivery_data=delivery_data,
+                payment_method=validated_data['payment_method'],
+                note=validated_data.get('note', ''),
+                items_data=items_data,
+                order_id=order_id,
+            )
+        except IntegrityError:
+            # Lost a race against another request with the same order_id -
+            # that one committed first; use its order instead of erroring.
+            if order_id is not None:
+                existing = Order.objects.filter(pk=order_id).first()
+                if existing is not None:
+                    return existing
+            raise
 
-        shipping_cost = validated_data.get('shipping_cost')
-        if is_admin and shipping_cost is not None:
-            services.set_shipping_cost(order, shipping_cost)
+        if is_admin:
+            shipping_cost = validated_data.get('shipping_cost')
+            if shipping_cost is not None:
+                services.set_shipping_cost(order, shipping_cost)
+        elif order.status == OrderStatus.NEW and order.total is not None:
+            # Catalog order (no custom item), fully priced - the customer
+            # already saw the final number in this same response, so admin
+            # confirmation would be a pointless extra step. A quote
+            # (QUOTE_REQUESTED) or an order admin is creating by hand still
+            # needs an explicit /confirm.
+            services.confirm_order(order)
 
         return order
 

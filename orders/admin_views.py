@@ -84,7 +84,7 @@ _PLACEMENT_ID_PARAM = OpenApiParameter('placement_id', str, OpenApiParameter.PAT
 class AdminOrderViewSet(viewsets.ModelViewSet):
     """Objednávky - jádro administrace. Nikdy se nemažou, zrušení = status CANCELLED."""
     permission_classes = [IsStaffOrAdmin]
-    http_method_names = ['get', 'post', 'patch', 'put', 'head', 'options']
+    http_method_names = ['get', 'post', 'patch', 'put', 'delete', 'head', 'options']
     filter_backends = []  # every filter below is bespoke (comma lists, camelCase params)
 
     def get_queryset(self):
@@ -250,6 +250,13 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         # it explicitly instead of leaving an untested full-replace live.
         raise MethodNotAllowed('PUT')
 
+    @extend_schema(exclude=True)
+    def destroy(self, request, *args, **kwargs):
+        # Same reasoning as update() above, for 'delete' (needed only for
+        # the shipping-cost reset action) - orders are never hard-deleted,
+        # cancellation is a status (see class docstring).
+        raise MethodNotAllowed('DELETE')
+
     @extend_schema(
         tags=_TAG,
         summary='Ocenit položku objednávky',
@@ -377,16 +384,19 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         return HttpResponseRedirect(placement.url)
 
     @extend_schema(
+        methods=['PUT'],
         tags=_TAG,
         summary='Nastavit cenu dopravy',
         description=(
             '`shippingCost` v haléřích (`0` znamená dopravu zdarma, ne '
             '"nenastaveno" - rozdíl od `null`, které znamená "ještě '
-            'nerozhodnuto"). Po uložení se přepočítá `total` celé objednávky. '
-            'Jen ve stavech QUOTE_REQUESTED/NEW, jinak 409 `ORDER_LOCKED`. '
-            'Stejně jako u ocenění položky, pokud byla objednávka už '
-            'potvrzená, tímto se potvrzení zruší a je nutné zavolat `/confirm` '
-            'znovu.'
+            'nerozhodnuto"). Nastaví `shippingCostManual: true` - od té '
+            'chvíle se cena dopravy při změně počtu kusů nepřepočítává '
+            'automaticky (vrať se k automatice přes `DELETE` na stejné '
+            'URL). Po uložení se přepočítá `total` celé objednávky. Jen ve '
+            'stavech QUOTE_REQUESTED/NEW, jinak 409 `ORDER_LOCKED`. Stejně '
+            'jako u ocenění položky, pokud byla objednávka už potvrzená, '
+            'tímto se potvrzení zruší a je nutné zavolat `/confirm` znovu.'
         ),
         request=AdminShippingCostSerializer,
         responses={
@@ -394,12 +404,31 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
             409: OpenApiResponse(description='ORDER_LOCKED - objednávka není ve stavu QUOTE_REQUESTED/NEW.'),
         },
     )
-    @action(detail=True, methods=['put'], url_path='shipping-cost')
+    @extend_schema(
+        methods=['DELETE'],
+        tags=_TAG,
+        summary='Vrátit cenu dopravy na automatiku',
+        description=(
+            'Zruší `shippingCostManual` a dopočítá cenu dopravy znovu podle '
+            'aktuálního dopravce, typu doručení a počtu kusů (stejně jako '
+            'při vzniku objednávky) - `null`, pokud pro tuto kombinaci není '
+            'nastavená cena. Jen ve stavech QUOTE_REQUESTED/NEW, jinak 409 '
+            '`ORDER_LOCKED`.'
+        ),
+        responses={
+            200: AdminOrderDetailSerializer,
+            409: OpenApiResponse(description='ORDER_LOCKED - objednávka není ve stavu QUOTE_REQUESTED/NEW.'),
+        },
+    )
+    @action(detail=True, methods=['put', 'delete'], url_path='shipping-cost')
     def shipping_cost(self, request, pk=None):
         order = self.get_object()
-        serializer = AdminShippingCostSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        services.set_shipping_cost(order, serializer.validated_data['shipping_cost'])
+        if request.method == 'DELETE':
+            services.reset_shipping_cost(order)
+        else:
+            serializer = AdminShippingCostSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            services.set_shipping_cost(order, serializer.validated_data['shipping_cost'])
         order.refresh_from_db()
         return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
 
@@ -574,10 +603,22 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
             'potvrzení příchozí platby převodem, aniž by se měnil stav '
             'objednávky. Frontend může po zaplacení nabídnout i posun '
             '`status` na PAID, ale server to **sám automaticky neudělá** - '
-            'jsou to dvě oddělené akce.'
+            'jsou to dvě oddělené akce.\n\n'
+            'Povolené přechody: `PENDING→PAID`, `PENDING→FAILED`, '
+            '`FAILED→PENDING`, `FAILED→PAID`, `PAID→REFUNDED` - jiná '
+            'kombinace 409. `PAID` a `REFUNDED` smí jen role ADMIN (STAFF '
+            '403) - ručně "zaplatit" nebo vrátit platbu je riziková akce. '
+            '`PAID` navíc vyžaduje stanovenou cenu (422 `ORDER_NOT_PRICED`). '
+            'U zrušené nebo vrácené objednávky (status CANCELLED/REFUNDED) '
+            'nejde platební stav změnit vůbec (409).'
         ),
         request=AdminPaymentStatusSerializer,
-        responses={200: AdminOrderDetailSerializer},
+        responses={
+            200: AdminOrderDetailSerializer,
+            403: OpenApiResponse(description='PAID/REFUNDED smí jen role ADMIN.'),
+            409: OpenApiResponse(description='Nepovolený přechod, nebo objednávka je CANCELLED/REFUNDED.'),
+            422: OpenApiResponse(description='ORDER_NOT_PRICED - total je stále null.'),
+        },
     )
     @action(detail=True, methods=['patch'], url_path='payment-status')
     def payment_status(self, request, pk=None):
@@ -587,8 +628,8 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         value = serializer.validated_data['payment_status']
         if value not in PaymentStatus.values:
             raise serializers.ValidationError({'payment_status': _('Unknown payment status.')})
-        order.payment_status = value
-        order.save(update_fields=['payment_status', 'updated_at'])
+        services.transition_payment_status(order, value, is_admin=self._is_admin_role())
+        order.refresh_from_db()
         return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
 
     @extend_schema(

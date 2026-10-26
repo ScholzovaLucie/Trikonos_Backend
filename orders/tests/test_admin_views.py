@@ -6,9 +6,9 @@ from rest_framework.test import APIClient
 from accounts.models import StaffRole, User
 from core.exceptions import PacketaApiError
 from customers.models import Customer
-from orders.models import DeliveryType, Order, OrderStatus, PaymentMethod, ShipmentStatus
+from orders.models import DeliveryType, Order, OrderStatus, PaymentMethod, PaymentStatus, ShipmentStatus
 from orders.services import build_order_item
-from shipping.models import Carrier, PacketaConfig
+from shipping.models import Carrier, PacketaConfig, ShippingPrice
 from shipping.packeta_client import CreatedPacket, PacketStatus
 
 pytestmark = pytest.mark.django_db
@@ -200,3 +200,60 @@ def test_shipment_tracking_never_regresses_shipment_status(staff_client, motif, 
     assert response.data['shipment_status'] == ShipmentStatus.DELIVERED
     order.refresh_from_db()
     assert order.shipment_status == ShipmentStatus.DELIVERED
+
+
+def test_reset_shipping_cost_endpoint_reverts_to_automatic(staff_client, motif, product_type, cut, color, packeta_carrier):
+    ShippingPrice.objects.create(carrier=packeta_carrier, delivery_type=DeliveryType.PICKUP_POINT, price=4200)
+    order = _order(
+        motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
+        shipping_cost=999, shipping_cost_manual=True,
+    )
+
+    response = staff_client.delete(f'/api/v1/admin/orders/{order.id}/shipping-cost')
+
+    assert response.status_code == 200
+    assert response.data['shipping_cost'] == 4200
+    assert response.data['shipping_cost_manual'] is False
+    order.refresh_from_db()
+    assert order.shipping_cost == 4200
+    assert order.shipping_cost_manual is False
+
+
+def test_set_shipping_cost_endpoint_marks_manual(staff_client, motif, product_type, cut, color, packeta_carrier):
+    order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
+
+    response = staff_client.put(f'/api/v1/admin/orders/{order.id}/shipping-cost', {'shippingCost': 777}, format='json')
+
+    assert response.status_code == 200
+    assert response.data['shipping_cost'] == 777
+    assert response.data['shipping_cost_manual'] is True
+
+
+def test_payment_status_endpoint_admin_can_mark_paid(motif, product_type, cut, color, packeta_carrier):
+    admin = User.objects.create_user(email='admin3@trikonos.cz', password='x', name='Admin', role=StaffRole.ADMIN)
+    client = APIClient()
+    client.force_authenticate(user=admin)
+    order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
+
+    response = client.patch(f'/api/v1/admin/orders/{order.id}/payment-status', {'paymentStatus': 'PAID'}, format='json')
+
+    assert response.status_code == 200
+    assert response.data['payment_status'] == PaymentStatus.PAID
+
+
+def test_payment_status_endpoint_staff_cannot_mark_paid(staff_client, motif, product_type, cut, color, packeta_carrier):
+    order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
+
+    response = staff_client.patch(f'/api/v1/admin/orders/{order.id}/payment-status', {'paymentStatus': 'PAID'}, format='json')
+
+    assert response.status_code == 403
+    order.refresh_from_db()
+    assert order.payment_status == PaymentStatus.PENDING
+
+
+def test_payment_status_endpoint_rejects_invalid_transition(staff_client, motif, product_type, cut, color, packeta_carrier):
+    order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
+
+    response = staff_client.patch(f'/api/v1/admin/orders/{order.id}/payment-status', {'paymentStatus': 'REFUNDED'}, format='json')
+
+    assert response.status_code == 409

@@ -1,18 +1,20 @@
 from core.exceptions import BusinessError
 
-from .models import PacketaConfig, ShippingPrice, ShippingQuantityDiscount
+from .models import CodSurcharge, PacketaConfig, ShippingPrice, ShippingQuantityDiscount
 
 
-def calculate_shipping_cost(*, carrier, delivery_type, total_quantity):
+def calculate_shipping_cost(*, carrier, delivery_type, payment_method, total_quantity):
     """Price depends on which carrier + delivery type was chosen, each with
     its own quantity discount tiers on top (e.g. 30+ pieces -30%, 50+ pieces
-    free). Personal pickup at the shop is always free, no carrier or price
-    row involved. Returns the price in haléře after the best matching
-    active discount, or None if either delivery hasn't been chosen yet
-    (`carrier` is None) or admin hasn't configured a price for this pair -
-    callers must treat None as "unknown", not as free shipping.
+    free), plus a flat CodSurcharge on top of that when paying cash on
+    delivery. Personal pickup at the shop is always free, no carrier, price
+    row or surcharge involved - the customer pays in person, nothing for a
+    carrier to collect. Returns the price in haléře, or None if either
+    delivery hasn't been chosen yet (`carrier` is None) or admin hasn't
+    configured a price for this pair - callers must treat None as
+    "unknown", not as free shipping.
     """
-    from orders.models import DeliveryType
+    from orders.models import DeliveryType, PaymentMethod
 
     if delivery_type == DeliveryType.PERSONAL_PICKUP:
         return 0
@@ -28,7 +30,11 @@ def calculate_shipping_cost(*, carrier, delivery_type, total_quantity):
     ).order_by('-min_quantity').first()
     discount_percent = tier.discount_percent if tier else 0
 
-    return price_row.price * (100 - discount_percent) // 100
+    cost = price_row.price * (100 - discount_percent) // 100
+    if payment_method == PaymentMethod.CASH_ON_DELIVERY:
+        cost += CodSurcharge.get_solo().amount
+
+    return cost
 
 
 # ---------------------------------------------------------------------------

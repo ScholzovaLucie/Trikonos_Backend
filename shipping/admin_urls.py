@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .admin_views import (
     AdminCarrierViewSet,
+    AdminCodSurchargeView,
     AdminPacketaConfigView,
     AdminShippingPriceViewSet,
     AdminShippingQuantityDiscountViewSet,
@@ -20,5 +21,10 @@ urlpatterns = [
         'packeta-config',
         AdminPacketaConfigView.as_view({'get': 'list', 'put': 'update'}),
         name='admin-packeta-config',
+    ),
+    path(
+        'cod-surcharge',
+        AdminCodSurchargeView.as_view({'get': 'list', 'put': 'update'}),
+        name='admin-cod-surcharge',
     ),
 ] + router.urls

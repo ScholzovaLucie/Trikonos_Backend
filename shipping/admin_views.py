@@ -2,16 +2,17 @@ from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import viewsets
 from rest_framework.response import Response
 
-from accounts.permissions import IsAdmin
+from accounts.permissions import IsAdmin, IsStaffOrAdmin
 from core.admin_lookup import LookupAdminViewSet, lookup_schema_view
 
 from .admin_serializers import (
     AdminCarrierSerializer,
+    AdminCodSurchargeSerializer,
     AdminPacketaConfigSerializer,
     AdminShippingPriceSerializer,
     AdminShippingQuantityDiscountSerializer,
 )
-from .models import Carrier, PacketaConfig, ShippingPrice, ShippingQuantityDiscount
+from .models import Carrier, CodSurcharge, PacketaConfig, ShippingPrice, ShippingQuantityDiscount
 
 
 @lookup_schema_view(
@@ -57,6 +58,48 @@ class AdminShippingPriceViewSet(LookupAdminViewSet):
         if carrier_id:
             queryset = queryset.filter(carrier_id=carrier_id)
         return queryset.order_by('carrier__name', 'delivery_type')
+
+
+@extend_schema_view(
+    list=extend_schema(
+        tags=['Admin - doprava'],
+        summary='Zobrazit příplatek za dobírku',
+        description=(
+            'Jednotný příplatek (haléře) připočítaný k `shippingCost`, '
+            'kdykoli je `paymentMethod: CASH_ON_DELIVERY` - dopravce si za '
+            'výběr hotovosti účtuje poplatek, tohle umožňuje ho přenést na '
+            'zákazníka. `amount: 0` (výchozí) = žádný příplatek. Nikdy se '
+            'nepřičítá u `PERSONAL_PICKUP` (osobní odběr je vždy zdarma, '
+            'žádný dopravce peníze nevybírá).'
+        ),
+        responses={200: AdminCodSurchargeSerializer},
+    ),
+    update=extend_schema(
+        tags=['Admin - doprava'],
+        summary='Nastavit příplatek za dobírku',
+        description='Jen role ADMIN.',
+        request=AdminCodSurchargeSerializer,
+        responses={200: AdminCodSurchargeSerializer},
+    ),
+)
+class AdminCodSurchargeView(viewsets.ViewSet):
+    """GET/PUT /admin/cod-surcharge - singleton příplatek za dobírku."""
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [IsStaffOrAdmin()]
+        return [IsAdmin()]
+
+    def list(self, request):
+        serializer = AdminCodSurchargeSerializer(CodSurcharge.get_solo())
+        return Response(serializer.data)
+
+    def update(self, request):
+        instance = CodSurcharge.get_solo()
+        serializer = AdminCodSurchargeSerializer(instance, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 @extend_schema_view(

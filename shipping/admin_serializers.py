@@ -1,6 +1,13 @@
 from rest_framework import serializers
 
-from .models import SHIPPING_PRICE_DELIVERY_TYPE_CHOICES, Carrier, PacketaConfig, ShippingPrice, ShippingQuantityDiscount
+from .models import (
+    SHIPPING_PRICE_DELIVERY_TYPE_CHOICES,
+    Carrier,
+    CodSurcharge,
+    PacketaConfig,
+    ShippingPrice,
+    ShippingQuantityDiscount,
+)
 
 
 class AdminCarrierSerializer(serializers.ModelSerializer):
@@ -20,6 +27,13 @@ class AdminShippingPriceSerializer(serializers.ModelSerializer):
     class Meta:
         model = ShippingPrice
         fields = ['id', 'carrier_id', 'carrier_name', 'delivery_type', 'price', 'updated_at']
+        read_only_fields = ['updated_at']
+
+
+class AdminCodSurchargeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CodSurcharge
+        fields = ['amount', 'updated_at']
         read_only_fields = ['updated_at']
 
 

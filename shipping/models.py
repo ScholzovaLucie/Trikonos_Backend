@@ -91,6 +91,35 @@ class PacketaConfig(models.Model):
         return 'Packeta'
 
 
+class CodSurcharge(models.Model):
+    """Singleton: flat surcharge (haléře) added to shipping_cost whenever
+    Order.payment_method is CASH_ON_DELIVERY - the carrier charges the shop
+    a fee for collecting cash on delivery, optionally passed on to the
+    customer. Never applies to PERSONAL_PICKUP (always free, no carrier
+    involved - there's no cash collection fee to pass on).
+    """
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    amount = models.PositiveIntegerField(default=0, help_text='In haléře; 0 = no surcharge.')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'cod_surcharge'
+        verbose_name = _('COD surcharge')
+        verbose_name_plural = _('COD surcharge')
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get_solo(cls):
+        obj, _created = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return 'Příplatek za dobírku'
+
+
 class ShippingQuantityDiscount(UUIDModel):
     """Quantity-based discount tier on top of one ShippingPrice row, e.g.
     'from 30 pieces, 30% off; from 50 pieces, free'. Scoped to a single

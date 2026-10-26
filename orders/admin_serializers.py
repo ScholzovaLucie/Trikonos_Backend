@@ -120,7 +120,7 @@ class AdminOrderDetailSerializer(serializers.ModelSerializer):
         model = Order
         fields = [
             'id', 'order_number', 'customer', 'status', 'status_label',
-            'subtotal', 'shipping_cost', 'total', 'currency',
+            'subtotal', 'shipping_cost', 'shipping_cost_manual', 'total', 'currency',
             'carrier', 'delivery_type', 'pickup_point_id', 'pickup_point_name',
             'tracking_number', 'carrier_shipment_id', 'shipment_status',
             'payment_method', 'payment_status',

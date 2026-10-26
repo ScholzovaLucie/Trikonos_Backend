@@ -71,8 +71,11 @@ class CartValidateView(APIView):
             'kombinaci dopravce + typu doručení (se slevou podle celkového '
             'počtu kusů v košíku), `null` pokud ji admin pro tuto kombinaci '
             'ještě nenastavil v `/admin/shipping-prices`. `PERSONAL_PICKUP` '
-            '(osobní odběr) je vždy zdarma, bez `carrierId`. `total` = '
-            '`subtotal + shippingCost`, `null`, pokud je cokoliv z toho `null`.'
+            '(osobní odběr) je vždy zdarma, bez `carrierId`. Nepovinné '
+            '`paymentMethod` - s `CASH_ON_DELIVERY` `shippingCost` zahrnuje '
+            'i příplatek za dobírku (`/admin/cod-surcharge`); bez něj se '
+            'příplatek do náhledu nepromítne. `total` = `subtotal + '
+            'shippingCost`, `null`, pokud je cokoliv z toho `null`.'
         ),
         request=CartValidateSerializer,
         responses={200: CartValidateResponseSerializer},
@@ -111,6 +114,7 @@ class CartValidateView(APIView):
             shipping_cost = calculate_shipping_cost(
                 carrier=serializer.validated_data.get('carrier'),
                 delivery_type=serializer.validated_data.get('delivery_type'),
+                payment_method=serializer.validated_data.get('payment_method'),
                 total_quantity=total_quantity,
             )
         total = subtotal + shipping_cost if subtotal is not None and shipping_cost is not None else None
@@ -155,13 +159,19 @@ class OrderCreateView(generics.CreateAPIView):
             'jako položka a vejít se do jeho rozměrů, jinak 422.\n'
             '- Prázdné `items` → 400.\n\n'
             '**Stav při vzniku:** obsahuje-li objednávka aspoň jednu vlastní '
-            'položku → `QUOTE_REQUESTED` (čeká na ocenění adminem), jinak `NEW` '
-            '(cena zboží je jasná, čeká se na dopravu a potvrzení). Odpověď '
-            'obsahuje `accessToken` - ulož si ho na frontendu (např. do URL '
-            'potvrzovací stránky), je to jediný veřejný způsob, jak se k '
-            'objednávce znovu vrátit přes `GET /orders/access/{accessToken}`, '
-            'kromě dohledání přes `POST /orders/lookup`. Po úspěchu se odešlou '
-            'e-maily zákazníkovi i obchodu.'
+            'položku → `QUOTE_REQUESTED` (čeká na ocenění adminem). Jinak '
+            '`NEW` a rovnou **potvrzená** (`confirmedAt` se nastaví '
+            'automaticky) - zákazník viděl finální cenu přímo v této '
+            'odpovědi, nemá smysl čekat na ruční potvrzení adminem.\n\n'
+            '**Dvojité odeslání:** nepovinné `orderId` (UUID vygenerované '
+            'na frontendu, např. při otevření checkoutu) - request se '
+            'stejným `orderId` podruhé (dvojklik, retry sítě) vrátí tu '
+            'samou, už vytvořenou objednávku místo založení duplicitní.\n\n'
+            'Odpověď obsahuje `accessToken` - ulož si ho na frontendu (např. '
+            'do URL potvrzovací stránky), je to jediný veřejný způsob, jak '
+            'se k objednávce znovu vrátit přes `GET /orders/access/'
+            '{accessToken}`, kromě dohledání přes `POST /orders/lookup`. Po '
+            'úspěchu se odešlou e-maily zákazníkovi i obchodu.'
         ),
         request=OrderCreateSerializer,
         responses={
