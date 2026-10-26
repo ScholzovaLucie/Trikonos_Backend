@@ -14,6 +14,7 @@ from . import services
 from .admin_serializers import (
     LOCKED_UPDATE_FIELDS,
     AdminConfirmOrderSerializer,
+    AdminCreateShipmentSerializer,
     AdminOrderDetailSerializer,
     AdminOrderItemPriceSerializer,
     AdminOrderListSerializer,
@@ -399,6 +400,89 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         serializer = AdminShippingCostSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         services.set_shipping_cost(order, serializer.validated_data['shipping_cost'])
+        order.refresh_from_db()
+        return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
+
+    @extend_schema(
+        tags=_TAG,
+        summary='Založit zásilku u Packety',
+        description=(
+            'Zavolá Packeta API a založí zásilku - funguje pro výdejní místo '
+            'i doručení na adresu podle `deliveryType` objednávky. `weight` '
+            '(kg) je povinné, nic v systému váhu balíku nepočítá, admin ji '
+            'zadá podle skutečnosti. `value` (haléře) je nepovinný override '
+            'pojistné hodnoty, jinak se použije `total` objednávky. '
+            'Vyžaduje nastaveného dopravce PACKETA a `deliveryType` na '
+            'objednávce. Výsledné `trackingNumber` a `carrierShipmentId` se '
+            'uloží na objednávku. Nejde zavolat podruhé pro stejnou '
+            'objednávku (409 `SHIPMENT_ALREADY_CREATED`) - zásilka u Packety '
+            'by se zdvojila.'
+        ),
+        request=AdminCreateShipmentSerializer,
+        responses={
+            200: AdminOrderDetailSerializer,
+            409: OpenApiResponse(description='SHIPMENT_ALREADY_CREATED - zásilka pro tuto objednávku už existuje.'),
+            502: OpenApiResponse(description='CARRIER_API_ERROR - Packeta vrátila chybu (špatné údaje, neplatné apiPassword, ...).'),
+        },
+    )
+    @action(detail=True, methods=['post'], url_path='shipment')
+    def create_shipment(self, request, pk=None):
+        order = self.get_object()
+        serializer = AdminCreateShipmentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.create_shipment(
+            order,
+            weight=serializer.validated_data['weight'],
+            value=serializer.validated_data.get('value'),
+        )
+        order.refresh_from_db()
+        return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
+
+    @extend_schema(
+        tags=_TAG,
+        summary='Stáhnout štítek zásilky',
+        description=(
+            'Stáhne PDF se štítkem zásilky od Packety (vyžaduje už založenou '
+            'zásilku, jinak 422). Při prvním stažení posune `shipmentStatus` '
+            'z CREATED na LABEL_PRINTED.'
+        ),
+        responses={
+            200: OpenApiResponse(description='PDF se štítkem (application/pdf).'),
+            422: OpenApiResponse(description='SHIPMENT_NOT_CREATED - zásilka pro tuto objednávku ještě nebyla založena.'),
+            502: OpenApiResponse(description='CARRIER_API_ERROR - Packeta vrátila chybu.'),
+        },
+    )
+    @action(detail=True, methods=['get'], url_path='shipment/label')
+    def shipment_label(self, request, pk=None):
+        from django.http import HttpResponse
+
+        order = self.get_object()
+        pdf_bytes = services.get_shipment_label_pdf(order)
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="{order.order_number}-label.pdf"'
+        return response
+
+    @extend_schema(
+        tags=_TAG,
+        summary='Zjistit aktuální stav zásilky u Packety',
+        description=(
+            'Zavolá Packeta API (`packetStatus`) a zjistí aktuální stav '
+            'zásilky v jejich síti. Pokud se mapuje na náš '
+            '`shipmentStatus` (CREATED/IN_TRANSIT/DELIVERED/RETURNED) a je '
+            'to posun **dopředu**, uloží se - stav nikdy nejde zpátky, i '
+            'kdyby Packeta vrátila zastaralá data. Vyžaduje už založenou '
+            'zásilku (422 `SHIPMENT_NOT_CREATED`, pokud ne).'
+        ),
+        responses={
+            200: AdminOrderDetailSerializer,
+            422: OpenApiResponse(description='SHIPMENT_NOT_CREATED - zásilka pro tuto objednávku ještě nebyla založena.'),
+            502: OpenApiResponse(description='CARRIER_API_ERROR - Packeta vrátila chybu.'),
+        },
+    )
+    @action(detail=True, methods=['get'], url_path='shipment/status')
+    def shipment_tracking(self, request, pk=None):
+        order = self.get_object()
+        services.sync_shipment_status(order)
         order.refresh_from_db()
         return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
 

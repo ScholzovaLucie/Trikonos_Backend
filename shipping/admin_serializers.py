@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Carrier, ShippingPrice, ShippingQuantityDiscount
+from .models import Carrier, PacketaConfig, ShippingPrice, ShippingQuantityDiscount
 
 
 class AdminCarrierSerializer(serializers.ModelSerializer):
@@ -16,6 +16,13 @@ class AdminShippingPriceSerializer(serializers.ModelSerializer):
     class Meta:
         model = ShippingPrice
         fields = ['price', 'updated_at']
+        read_only_fields = ['updated_at']
+
+
+class AdminPacketaConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PacketaConfig
+        fields = ['api_password', 'eshop', 'home_delivery_address_id', 'label_format', 'updated_at']
         read_only_fields = ['updated_at']
 
 

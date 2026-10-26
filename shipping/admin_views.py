@@ -7,10 +7,11 @@ from core.admin_lookup import LookupAdminViewSet, lookup_schema_view
 
 from .admin_serializers import (
     AdminCarrierSerializer,
+    AdminPacketaConfigSerializer,
     AdminShippingPriceSerializer,
     AdminShippingQuantityDiscountSerializer,
 )
-from .models import Carrier, ShippingPrice, ShippingQuantityDiscount
+from .models import Carrier, PacketaConfig, ShippingPrice, ShippingQuantityDiscount
 
 
 @lookup_schema_view(
@@ -66,6 +67,46 @@ class AdminShippingPriceView(viewsets.ViewSet):
     def update(self, request):
         instance = ShippingPrice.get_solo()
         serializer = AdminShippingPriceSerializer(instance, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
+@extend_schema_view(
+    list=extend_schema(
+        tags=['Admin - číselníky'],
+        summary='Zobrazit nastavení Packety',
+        description=(
+            'Přihlašovací údaje a nastavení pro napojení na Packeta '
+            '(Zásilkovna) API (viz `shipping/packeta_client.py`) - jen role '
+            'ADMIN, jsou to citlivé údaje. `apiPassword: ""` znamená, že '
+            'integrace ještě není nastavená - vytvoření zásilky pak selže '
+            's jasnou chybou. `homeDeliveryAddressId` je ID externího '
+            'dopravce pro doručení na adresu (ne ID výdejního místa) - '
+            'dostanete ho z klientské zóny Packety, nejde ho uhodnout. Pro '
+            'doručení na výdejní místo stačí jen `apiPassword`.'
+        ),
+        responses={200: AdminPacketaConfigSerializer},
+    ),
+    update=extend_schema(
+        tags=['Admin - číselníky'],
+        summary='Nastavit napojení na Packetu',
+        description='Jen role ADMIN.',
+        request=AdminPacketaConfigSerializer,
+        responses={200: AdminPacketaConfigSerializer},
+    ),
+)
+class AdminPacketaConfigView(viewsets.ViewSet):
+    """GET/PUT /admin/packeta-config - singleton nastavení napojení na Packetu."""
+    permission_classes = [IsAdmin]
+
+    def list(self, request):
+        serializer = AdminPacketaConfigSerializer(PacketaConfig.get_solo())
+        return Response(serializer.data)
+
+    def update(self, request):
+        instance = PacketaConfig.get_solo()
+        serializer = AdminPacketaConfigSerializer(instance, data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)

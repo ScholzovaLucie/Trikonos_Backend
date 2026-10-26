@@ -11,7 +11,7 @@ from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy
 from rest_framework import exceptions as drf_exceptions
 
-from core.exceptions import BusinessError, InvalidStatusTransitionError, OrderLockedError
+from core.exceptions import BusinessError, InvalidStatusTransitionError, OrderLockedError, ShipmentAlreadyCreatedError
 
 from .models import (
     CustomDesignPlacement,
@@ -477,4 +477,99 @@ def transition_order_status(order, target_status, *, is_admin):
         order.payment_status = PaymentStatus.REFUNDED
 
     order.save()
+    return order
+
+
+# ---------------------------------------------------------------------------
+# Packeta shipment creation + label.
+# ---------------------------------------------------------------------------
+
+def create_shipment(order, *, weight, value=None):
+    """POST /admin/orders/{id}/shipment. Creates the packet at Packeta and
+    stores the resulting carrier_shipment_id/tracking_number - only after a
+    successful API call, so a failed call never leaves the order half
+    updated. Not idempotent: calling it twice for the same order would
+    create a duplicate shipment at Packeta, so a shipment already on the
+    order is a hard error, not a silent no-op.
+    """
+    if order.carrier_shipment_id:
+        raise ShipmentAlreadyCreatedError(
+            _('A shipment was already created for this order (tracking %(tracking)s).')
+            % {'tracking': order.tracking_number},
+        )
+
+    from shipping.packeta_client import create_packet
+    from shipping.services import build_packet_attributes
+
+    attributes = build_packet_attributes(order, weight=weight, value=value)
+    result = create_packet(packet_attributes=attributes)
+
+    order.carrier_shipment_id = result.packet_id
+    order.tracking_number = result.barcode_text
+    order.save(update_fields=['carrier_shipment_id', 'tracking_number', 'updated_at'])
+    return order
+
+
+def get_shipment_label_pdf(order):
+    """GET /admin/orders/{id}/shipment/label. Fetches the label PDF from
+    Packeta and bumps shipment_status CREATED -> LABEL_PRINTED - a one-way
+    step, same as the rest of the shipment status machine.
+    """
+    if not order.carrier_shipment_id:
+        raise BusinessError(_('No shipment has been created for this order yet.'), code='SHIPMENT_NOT_CREATED')
+
+    from shipping.models import PacketaConfig
+    from shipping.packeta_client import get_label_pdf
+
+    pdf_bytes = get_label_pdf(
+        packet_id=order.carrier_shipment_id, label_format=PacketaConfig.get_solo().label_format,
+    )
+
+    if order.shipment_status == ShipmentStatus.CREATED:
+        order.shipment_status = ShipmentStatus.LABEL_PRINTED
+        order.save(update_fields=['shipment_status', 'updated_at'])
+
+    return pdf_bytes
+
+
+# Packeta's packetStatus codes (see Packeta API docs, packet-tracking/status-codes)
+# mapped onto our own, coarser ShipmentStatus. Codes with no clear local
+# equivalent (11 cancelled, 16 delivery attempt, 17 rejected by recipient,
+# 999 unknown) are intentionally left unmapped - sync_shipment_status then
+# leaves shipment_status untouched for those, admin handles them through the
+# order status machine instead.
+_PACKETA_STATUS_CODE_MAP = {
+    1: ShipmentStatus.CREATED,            # received data
+    2: ShipmentStatus.IN_TRANSIT,         # arrived at branch
+    3: ShipmentStatus.IN_TRANSIT,         # prepared for departure
+    4: ShipmentStatus.IN_TRANSIT,         # departed
+    5: ShipmentStatus.IN_TRANSIT,         # ready for pickup
+    6: ShipmentStatus.IN_TRANSIT,         # handed to external carrier
+    7: ShipmentStatus.DELIVERED,          # delivered
+    9: ShipmentStatus.RETURNED,           # posted back
+    10: ShipmentStatus.RETURNED,          # returned
+    12: ShipmentStatus.IN_TRANSIT,        # collected
+    14: ShipmentStatus.IN_TRANSIT,        # customs
+    15: ShipmentStatus.IN_TRANSIT,        # reverse packet arrived
+}
+
+
+def sync_shipment_status(order):
+    """GET /admin/orders/{id}/shipment/status. Pulls the packet's current
+    state from Packeta and maps it onto shipment_status - only ever moves
+    forward (_shipment_status_rank), since Packeta's tracking is more
+    granular than ours and a response should never regress what we already
+    recorded (e.g. a manual override via PATCH .../shipment-status).
+    """
+    if not order.carrier_shipment_id:
+        raise BusinessError(_('No shipment has been created for this order yet.'), code='SHIPMENT_NOT_CREATED')
+
+    from shipping.packeta_client import get_packet_status
+
+    packeta_status = get_packet_status(packet_id=order.carrier_shipment_id)
+    mapped = _PACKETA_STATUS_CODE_MAP.get(packeta_status.status_code)
+    if mapped is not None and _shipment_status_rank(mapped) > _shipment_status_rank(order.shipment_status):
+        order.shipment_status = mapped
+        order.save(update_fields=['shipment_status', 'updated_at'])
+
     return order

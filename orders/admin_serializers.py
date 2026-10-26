@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
@@ -119,7 +121,7 @@ class AdminOrderDetailSerializer(serializers.ModelSerializer):
             'id', 'order_number', 'customer', 'status', 'status_label',
             'subtotal', 'shipping_cost', 'total', 'currency',
             'carrier', 'delivery_type', 'pickup_point_id', 'pickup_point_name',
-            'tracking_number', 'shipment_status',
+            'tracking_number', 'carrier_shipment_id', 'shipment_status',
             'payment_method', 'payment_status',
             'billing', 'shipping', 'note', 'items',
             'allowed_transitions', 'is_locked',
@@ -196,6 +198,17 @@ class AdminOrderStatusSerializer(serializers.Serializer):
 
 class AdminPaymentStatusSerializer(serializers.Serializer):
     payment_status = serializers.CharField()
+
+
+class AdminCreateShipmentSerializer(serializers.Serializer):
+    """POST /orders/{id}/shipment. `weight` isn't tracked anywhere on the
+    order/items (no product weighs anything in this system) - admin weighs
+    the package and enters it here. `value` overrides the insurance value
+    sent to Packeta (defaults to the order's total) in case admin wants to
+    declare something else.
+    """
+    weight = serializers.DecimalField(max_digits=6, decimal_places=3, min_value=Decimal('0.001'))
+    value = serializers.IntegerField(required=False, min_value=0)
 
 
 class AdminShipmentStatusSerializer(serializers.Serializer):

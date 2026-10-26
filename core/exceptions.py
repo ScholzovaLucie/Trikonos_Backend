@@ -69,6 +69,18 @@ class UnsupportedFileTypeError(BusinessError):
     default_detail = _('Unsupported file type.')
 
 
+class PacketaApiError(BusinessError):
+    status_code = 502
+    default_code = 'CARRIER_API_ERROR'
+    default_detail = _('Error communicating with the carrier (Packeta).')
+
+
+class ShipmentAlreadyCreatedError(BusinessError):
+    status_code = 409
+    default_code = 'SHIPMENT_ALREADY_CREATED'
+    default_detail = _('A shipment was already created for this order.')
+
+
 # Fallback mapping for DRF/Django exceptions that don't carry our own `.code`
 # attribute, checked via isinstance (ordered dict - first match wins).
 _CODE_BY_EXCEPTION_TYPE = {

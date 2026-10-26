@@ -33,6 +33,7 @@ class Order(UUIDModel):
     pickup_point_id = models.CharField(max_length=100, blank=True, default='')
     pickup_point_name = models.CharField(max_length=255, blank=True, default='')
     tracking_number = models.CharField(max_length=100, blank=True, default='')
+    carrier_shipment_id = models.CharField(max_length=50, blank=True, default='', help_text="Packeta's own packet ID")
     shipment_status = models.CharField(max_length=20, choices=ShipmentStatus.choices, default=ShipmentStatus.CREATED)
 
     # Payment

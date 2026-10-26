@@ -47,6 +47,46 @@ class ShippingPrice(models.Model):
         return 'Cena dopravy'
 
 
+class PacketaConfig(models.Model):
+    """Singleton: credentials and settings for the Packeta (Zásilkovna)
+    carrier API (see shipping/packeta_client.py) - set by admin through
+    GET/PUT /admin/packeta-config, not env vars, so it can be changed
+    without a deploy. `api_password = ''` means Packeta integration isn't
+    configured yet - shipment creation then fails with a clear error
+    instead of calling the API with an empty password.
+    """
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    api_password = models.CharField(max_length=100, blank=True, default='')
+    eshop = models.CharField(
+        max_length=100, blank=True, default='',
+        help_text='Sender label - only needed if the Packeta account has multiple senders.',
+    )
+    home_delivery_address_id = models.CharField(
+        max_length=50, blank=True, default='',
+        help_text="ID of the external carrier used for home delivery (not a pickup point ID) - "
+                  "from Packeta's client zone / address delivery carriers feed.",
+    )
+    label_format = models.CharField(max_length=50, default='A6 on A4')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'packeta_config'
+        verbose_name = _('Packeta configuration')
+        verbose_name_plural = _('Packeta configuration')
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get_solo(cls):
+        obj, _created = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return 'Packeta'
+
+
 class ShippingQuantityDiscount(UUIDModel):
     """Quantity-based discount tier on top of ShippingPrice.price, e.g.
     'from 30 pieces, 30% off; from 50 pieces, free'. For a given order, the
