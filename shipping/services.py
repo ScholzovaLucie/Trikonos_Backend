@@ -3,23 +3,32 @@ from core.exceptions import BusinessError
 from .models import PacketaConfig, ShippingPrice, ShippingQuantityDiscount
 
 
-def calculate_shipping_cost(*, total_quantity):
-    """The shop has one shipping price with quantity discount tiers on top
-    (e.g. 30+ pieces -30%, 50+ pieces free). Returns the price in haléře
-    after the best matching active discount, or None if admin hasn't set a
-    base price yet - callers must treat None as "unknown, admin prices it
-    manually", not as free shipping.
+def calculate_shipping_cost(*, carrier, delivery_type, total_quantity):
+    """Price depends on which carrier + delivery type was chosen, each with
+    its own quantity discount tiers on top (e.g. 30+ pieces -30%, 50+ pieces
+    free). Personal pickup at the shop is always free, no carrier or price
+    row involved. Returns the price in haléře after the best matching
+    active discount, or None if either delivery hasn't been chosen yet
+    (`carrier` is None) or admin hasn't configured a price for this pair -
+    callers must treat None as "unknown", not as free shipping.
     """
-    base_price = ShippingPrice.objects.filter(pk=1).values_list('price', flat=True).first()
-    if base_price is None:
+    from orders.models import DeliveryType
+
+    if delivery_type == DeliveryType.PERSONAL_PICKUP:
+        return 0
+    if carrier is None:
         return None
 
-    tier = ShippingQuantityDiscount.objects.filter(
+    price_row = ShippingPrice.objects.filter(carrier=carrier, delivery_type=delivery_type).first()
+    if price_row is None:
+        return None
+
+    tier = price_row.quantity_discounts.filter(
         is_active=True, min_quantity__lte=total_quantity,
     ).order_by('-min_quantity').first()
     discount_percent = tier.discount_percent if tier else 0
 
-    return base_price * (100 - discount_percent) // 100
+    return price_row.price * (100 - discount_percent) // 100
 
 
 # ---------------------------------------------------------------------------

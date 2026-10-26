@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.utils.translation import gettext as _
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
@@ -170,6 +171,37 @@ class AdminOrderUpdateSerializer(serializers.Serializer):
     payment_method = serializers.ChoiceField(choices=PaymentMethod.choices, required=False, allow_null=True)
     note = serializers.CharField(required=False, allow_blank=True)
     tracking_number = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        # Partial update - only cross-check carrier/delivery_type against
+        # the resulting state (this PATCH's value if present, else the
+        # order's current value) when either one is actually being changed.
+        if 'delivery_type' not in attrs and 'carrier' not in attrs:
+            return attrs
+
+        delivery_type = attrs['delivery_type'] if 'delivery_type' in attrs else (
+            self.instance.delivery_type if self.instance else None
+        )
+        carrier = attrs['carrier'] if 'carrier' in attrs else (self.instance.carrier if self.instance else None)
+
+        if delivery_type == DeliveryType.PERSONAL_PICKUP:
+            if carrier is not None:
+                raise serializers.ValidationError(_('Personal pickup must not have a carrier.'))
+        elif delivery_type:
+            if carrier is None:
+                raise serializers.ValidationError(_('A carrier is required for this delivery type.'))
+            if delivery_type == DeliveryType.PICKUP_POINT:
+                pickup_point_id = attrs.get(
+                    'pickup_point_id', self.instance.pickup_point_id if self.instance else '',
+                )
+                pickup_point_name = attrs.get(
+                    'pickup_point_name', self.instance.pickup_point_name if self.instance else '',
+                )
+                if not pickup_point_id or not pickup_point_name:
+                    raise serializers.ValidationError(
+                        _('A pickup point requires both pickupPointId and pickupPointName.'),
+                    )
+        return attrs
 
 
 LOCKED_UPDATE_FIELDS = {

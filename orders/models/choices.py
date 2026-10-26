@@ -15,6 +15,7 @@ class OrderStatus(models.TextChoices):
 class DeliveryType(models.TextChoices):
     PICKUP_POINT = 'PICKUP_POINT', 'Pickup point'
     HOME_DELIVERY = 'HOME_DELIVERY', 'Home delivery'
+    PERSONAL_PICKUP = 'PERSONAL_PICKUP', 'Personal pickup'
 
 
 class PaymentMethod(models.TextChoices):

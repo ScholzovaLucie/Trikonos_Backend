@@ -198,7 +198,7 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
     )
     def partial_update(self, request, *args, **kwargs):
         order = self.get_object()
-        serializer = AdminOrderUpdateSerializer(data=request.data, partial=True)
+        serializer = AdminOrderUpdateSerializer(order, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 

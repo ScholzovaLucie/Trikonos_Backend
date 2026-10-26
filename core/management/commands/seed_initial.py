@@ -7,6 +7,7 @@ from django.utils.text import slugify
 
 from accounts.models import StaffRole
 from catalog.models import Category, Color, Cut, Motif, PrintArea, ProductType
+from orders.models import DeliveryType
 from shipping.models import Carrier, ShippingPrice, ShippingQuantityDiscount
 
 User = get_user_model()
@@ -47,7 +48,12 @@ PRODUCT_TYPES_WITH_PRINT_AREAS = {
 
 CATEGORIES = ['Pánská trička', 'Dámská trička', 'Mikiny', 'Doplňky', 'Kolekce', 'Týmové akce']
 
-SHIPPING_PRICE = 5000  # 50 Kč
+# Placeholder prices per (carrier, delivery_type) - admin adjusts via
+# GET/PUT /admin/shipping-prices after launch.
+SHIPPING_PRICES = [
+    (DeliveryType.PICKUP_POINT, 5000),   # 50 Kč
+    (DeliveryType.HOME_DELIVERY, 7900),  # 79 Kč
+]
 
 SHIPPING_QUANTITY_DISCOUNTS = [
     (30, 30),  # 30+ ks -> -30 %
@@ -78,8 +84,8 @@ class Command(BaseCommand):
         product_types = self._seed_product_types()
         self._seed_print_areas(product_types)
         categories = self._seed_categories()
-        self._seed_carrier()
-        self._seed_shipping_price()
+        carrier = self._seed_carrier()
+        self._seed_shipping_prices(carrier)
         self._seed_admin()
         self._seed_motifs(categories)
         self.stdout.write(self.style.SUCCESS('Seed data ready.'))
@@ -121,20 +127,21 @@ class Command(BaseCommand):
         return categories
 
     def _seed_carrier(self):
-        Carrier.objects.update_or_create(
+        carrier, _created = Carrier.objects.update_or_create(
             code='PACKETA', defaults={'name': 'Zásilkovna', 'position': 0},
         )
+        return carrier
 
-    def _seed_shipping_price(self):
-        price = ShippingPrice.get_solo()
-        if price.price is None:
-            price.price = SHIPPING_PRICE
-            price.save()
-
-        for position, (min_quantity, discount_percent) in enumerate(SHIPPING_QUANTITY_DISCOUNTS):
-            ShippingQuantityDiscount.objects.update_or_create(
-                min_quantity=min_quantity, defaults={'discount_percent': discount_percent, 'position': position},
+    def _seed_shipping_prices(self, carrier):
+        for delivery_type, price in SHIPPING_PRICES:
+            shipping_price, _created = ShippingPrice.objects.update_or_create(
+                carrier=carrier, delivery_type=delivery_type, defaults={'price': price},
             )
+            for position, (min_quantity, discount_percent) in enumerate(SHIPPING_QUANTITY_DISCOUNTS):
+                ShippingQuantityDiscount.objects.update_or_create(
+                    shipping_price=shipping_price, min_quantity=min_quantity,
+                    defaults={'discount_percent': discount_percent, 'position': position},
+                )
 
     def _seed_admin(self):
         email = os.environ.get('ADMIN_EMAIL')

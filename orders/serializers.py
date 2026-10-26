@@ -54,18 +54,24 @@ class ShippingInputSerializer(serializers.Serializer):
 
 class DeliveryInputSerializer(serializers.Serializer):
     carrier_id = serializers.PrimaryKeyRelatedField(
-        source='carrier', queryset=Carrier.objects.filter(is_active=True),
+        source='carrier', queryset=Carrier.objects.filter(is_active=True), required=False, allow_null=True,
     )
     delivery_type = serializers.ChoiceField(choices=DeliveryType.choices)
     pickup_point_id = serializers.CharField(required=False, allow_blank=True, default='')
     pickup_point_name = serializers.CharField(required=False, allow_blank=True, default='')
 
     def validate(self, attrs):
-        if attrs['delivery_type'] == DeliveryType.PICKUP_POINT:
-            if not attrs.get('pickup_point_id') or not attrs.get('pickup_point_name'):
-                raise serializers.ValidationError(
-                    _('A pickup point requires both pickupPointId and pickupPointName.')
-                )
+        if attrs['delivery_type'] == DeliveryType.PERSONAL_PICKUP:
+            if attrs.get('carrier') is not None:
+                raise serializers.ValidationError(_('Personal pickup must not have a carrier.'))
+        else:
+            if attrs.get('carrier') is None:
+                raise serializers.ValidationError(_('A carrier is required for this delivery type.'))
+            if attrs['delivery_type'] == DeliveryType.PICKUP_POINT:
+                if not attrs.get('pickup_point_id') or not attrs.get('pickup_point_name'):
+                    raise serializers.ValidationError(
+                        _('A pickup point requires both pickupPointId and pickupPointName.')
+                    )
         return attrs
 
 
@@ -129,6 +135,10 @@ class OrderItemInputSerializer(serializers.Serializer):
 
 class CartValidateSerializer(serializers.Serializer):
     items = OrderItemInputSerializer(many=True)
+    carrier_id = serializers.PrimaryKeyRelatedField(
+        source='carrier', queryset=Carrier.objects.filter(is_active=True), required=False, allow_null=True,
+    )
+    delivery_type = serializers.ChoiceField(choices=DeliveryType.choices, required=False, allow_null=True)
 
 
 class OrderCreateSerializer(serializers.Serializer):

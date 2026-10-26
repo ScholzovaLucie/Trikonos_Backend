@@ -5,7 +5,7 @@ from catalog.models import PrintArea, ProductType
 from core.exceptions import BusinessError, InvalidStatusTransitionError, OrderLockedError
 from customers.models import Customer
 from orders import services
-from orders.models import Order, OrderStatus, PaymentMethod, PaymentStatus
+from orders.models import DeliveryType, Order, OrderStatus, PaymentMethod, PaymentStatus
 from shipping.models import ShippingPrice, ShippingQuantityDiscount
 
 pytestmark = pytest.mark.django_db
@@ -50,12 +50,12 @@ def _customer_data(email='jana@example.cz', marketing_consent=True):
     }
 
 
-def _make_order(items_data, payment_method=PaymentMethod.BANK_TRANSFER, email='jana@example.cz'):
+def _make_order(items_data, payment_method=PaymentMethod.BANK_TRANSFER, email='jana@example.cz', delivery_data=None):
     return services.create_order(
         customer_data=_customer_data(email=email),
         billing_data=_billing(),
         shipping_data=_shipping_same_as_billing(),
-        delivery_data=_no_delivery(),
+        delivery_data=delivery_data if delivery_data is not None else _no_delivery(),
         payment_method=payment_method,
         note='',
         items_data=items_data,
@@ -283,73 +283,84 @@ def test_price_change_on_confirmed_order_resets_confirmed_at(product_type, cut, 
 
 
 # ---------------------------------------------------------------------------
-# Automatic shipping cost (shop-wide price + quantity discount tiers).
+# Automatic shipping cost (price per carrier + delivery type, quantity
+# discount tiers scoped to that pair).
 # ---------------------------------------------------------------------------
 
-def test_shipping_cost_stays_null_without_a_configured_base_price(motif, product_type, cut, color):
+def _home_delivery(carrier):
+    return {'carrier': carrier, 'delivery_type': DeliveryType.HOME_DELIVERY, 'pickup_point_id': '', 'pickup_point_name': ''}
+
+
+def _personal_pickup():
+    return {'carrier': None, 'delivery_type': DeliveryType.PERSONAL_PICKUP, 'pickup_point_id': '', 'pickup_point_name': ''}
+
+
+def test_shipping_cost_stays_null_without_a_configured_price_for_the_pair(motif, product_type, cut, color, carrier):
     items = [{
         'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
         'cut': cut, 'color': color, 'size': 'M', 'quantity': 2, 'placements': [],
     }]
 
-    order = _make_order(items)
+    order = _make_order(items, delivery_data=_home_delivery(carrier))
 
     assert order.shipping_cost is None
     assert order.total is None
 
 
-def test_automatic_shipping_cost_uses_base_price(motif, product_type, cut, color):
-    ShippingPrice.objects.update_or_create(pk=1, defaults={'price': 5000})
+def test_automatic_shipping_cost_uses_price_for_the_carrier_and_delivery_type(motif, product_type, cut, color, carrier):
+    ShippingPrice.objects.create(carrier=carrier, delivery_type=DeliveryType.HOME_DELIVERY, price=5000)
     items = [{
         'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
         'cut': cut, 'color': color, 'size': 'M', 'quantity': 2, 'placements': [],
     }]
 
-    order = _make_order(items)
+    order = _make_order(items, delivery_data=_home_delivery(carrier))
 
     assert order.shipping_cost == 5000
     assert order.total == motif.price * 2 + 5000
 
 
-def test_automatic_shipping_cost_applies_best_matching_quantity_discount(motif, product_type, cut, color):
-    ShippingPrice.objects.update_or_create(pk=1, defaults={'price': 5000})
-    ShippingQuantityDiscount.objects.create(min_quantity=30, discount_percent=30)
-    ShippingQuantityDiscount.objects.create(min_quantity=50, discount_percent=100)
+def test_automatic_shipping_cost_applies_best_matching_quantity_discount(motif, product_type, cut, color, carrier):
+    shipping_price = ShippingPrice.objects.create(carrier=carrier, delivery_type=DeliveryType.HOME_DELIVERY, price=5000)
+    ShippingQuantityDiscount.objects.create(shipping_price=shipping_price, min_quantity=30, discount_percent=30)
+    ShippingQuantityDiscount.objects.create(shipping_price=shipping_price, min_quantity=50, discount_percent=100)
 
     items_30 = [{
         'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
         'cut': cut, 'color': color, 'size': 'M', 'quantity': 30, 'placements': [],
     }]
-    order_30 = _make_order(items_30, email='thirty@example.cz')
+    order_30 = _make_order(items_30, email='thirty@example.cz', delivery_data=_home_delivery(carrier))
     assert order_30.shipping_cost == 3500  # 5000 * (1 - 0.30)
 
     items_50 = [{
         'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
         'cut': cut, 'color': color, 'size': 'M', 'quantity': 50, 'placements': [],
     }]
-    order_50 = _make_order(items_50, email='fifty@example.cz')
+    order_50 = _make_order(items_50, email='fifty@example.cz', delivery_data=_home_delivery(carrier))
     assert order_50.shipping_cost == 0  # 100% discount from the 50+ tier
 
 
-def test_automatic_shipping_cost_ignores_inactive_discount_tier(motif, product_type, cut, color):
-    ShippingPrice.objects.update_or_create(pk=1, defaults={'price': 5000})
-    ShippingQuantityDiscount.objects.create(min_quantity=30, discount_percent=100, is_active=False)
+def test_automatic_shipping_cost_ignores_inactive_discount_tier(motif, product_type, cut, color, carrier):
+    shipping_price = ShippingPrice.objects.create(carrier=carrier, delivery_type=DeliveryType.HOME_DELIVERY, price=5000)
+    ShippingQuantityDiscount.objects.create(
+        shipping_price=shipping_price, min_quantity=30, discount_percent=100, is_active=False,
+    )
 
     items = [{
         'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
         'cut': cut, 'color': color, 'size': 'M', 'quantity': 30, 'placements': [],
     }]
-    order = _make_order(items)
+    order = _make_order(items, delivery_data=_home_delivery(carrier))
 
     assert order.shipping_cost == 5000  # the only tier is inactive, so no discount applies
 
 
-def test_automatic_shipping_cost_applies_even_while_items_await_a_quote(product_type, cut, color, print_area):
+def test_automatic_shipping_cost_applies_even_while_items_await_a_quote(product_type, cut, color, print_area, carrier):
     """Shipping only depends on total item quantity, never on unit price -
     it's priced automatically even for a custom item still awaiting an
     admin quote, while `total` itself stays NULL until the item is priced.
     """
-    ShippingPrice.objects.update_or_create(pk=1, defaults={'price': 5000})
+    ShippingPrice.objects.create(carrier=carrier, delivery_type=DeliveryType.HOME_DELIVERY, price=5000)
     items = [{
         'is_custom': True, 'motif': None, 'custom_text': '', 'product_type': product_type,
         'cut': cut, 'color': color, 'size': 'L', 'quantity': 3,
@@ -358,9 +369,24 @@ def test_automatic_shipping_cost_applies_even_while_items_await_a_quote(product_
         }],
     }]
 
-    order = _make_order(items)
+    order = _make_order(items, delivery_data=_home_delivery(carrier))
 
     assert order.status == OrderStatus.QUOTE_REQUESTED
     assert order.shipping_cost == 5000
     assert order.subtotal is None
     assert order.total is None  # still unknown - the item itself has no price yet
+
+
+def test_personal_pickup_is_always_free_without_any_configured_price(motif, product_type, cut, color):
+    """PERSONAL_PICKUP never touches ShippingPrice at all - free regardless
+    of whether any carrier/delivery-type price has been configured.
+    """
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+
+    order = _make_order(items, delivery_data=_personal_pickup())
+
+    assert order.shipping_cost == 0
+    assert order.total == motif.price

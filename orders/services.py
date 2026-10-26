@@ -15,6 +15,7 @@ from core.exceptions import BusinessError, InvalidStatusTransitionError, OrderLo
 
 from .models import (
     CustomDesignPlacement,
+    DeliveryType,
     Order,
     OrderItem,
     OrderStatus,
@@ -229,19 +230,22 @@ def recalculate_totals(order):
 
 
 def _apply_automatic_shipping_cost(order, *, total_quantity):
-    """Fills Order.shipping_cost from the admin-managed shop-wide shipping
-    price (shipping.services.calculate_shipping_cost) at order creation
-    time. Unlike item pricing, this only depends on total item quantity,
-    not unit prices - it applies even to a QUOTE_REQUESTED order where some
-    items still await admin pricing. Leaves shipping_cost NULL if admin
-    hasn't configured a base price yet, same as before this feature existed.
-    An admin-supplied shippingCost on manual order creation is applied by
-    the caller (OrderCreateSerializer.create) right after this and
-    overrides whatever this sets.
+    """Fills Order.shipping_cost from the admin-managed price for this
+    order's (carrier, delivery_type) pair (shipping.services.
+    calculate_shipping_cost) at order creation time. Unlike item pricing,
+    this only depends on total item quantity, not unit prices - it applies
+    even to a QUOTE_REQUESTED order where some items still await admin
+    pricing. Leaves shipping_cost NULL if admin hasn't configured a price
+    for this pair yet, same as before this feature existed. An
+    admin-supplied shippingCost on manual order creation is applied by the
+    caller (OrderCreateSerializer.create) right after this and overrides
+    whatever this sets.
     """
     from shipping.services import calculate_shipping_cost
 
-    cost = calculate_shipping_cost(total_quantity=total_quantity)
+    cost = calculate_shipping_cost(
+        carrier=order.carrier, delivery_type=order.delivery_type, total_quantity=total_quantity,
+    )
     if cost is not None:
         order.shipping_cost = cost
         order.save(update_fields=['shipping_cost', 'updated_at'])
@@ -377,6 +381,8 @@ def _confirmed_and_priced(order):
 
 
 def _carrier_and_delivery_set(order):
+    if order.delivery_type == DeliveryType.PERSONAL_PICKUP:
+        return True
     return order.carrier_id is not None and bool(order.delivery_type)
 
 

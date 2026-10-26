@@ -2,7 +2,7 @@ from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import viewsets
 from rest_framework.response import Response
 
-from accounts.permissions import IsAdmin, IsStaffOrAdmin
+from accounts.permissions import IsAdmin
 from core.admin_lookup import LookupAdminViewSet, lookup_schema_view
 
 from .admin_serializers import (
@@ -18,10 +18,10 @@ from .models import Carrier, PacketaConfig, ShippingPrice, ShippingQuantityDisco
     'dopravce', 'dopravců',
     extra_note=(
         '`code` se uloží velkými písmeny (interní kód pro integrační vrstvu, '
-        'např. PACKETA). Cena dopravy je jednotná pro celý e-shop (viz '
-        '`GET/PUT /admin/shipping-price` a `/admin/shipping-quantity-discounts`), '
-        'nezávisí na dopravci - tahle tabulka slouží jen k výběru dopravce '
-        'v checkoutu a u objednávky.'
+        'např. PACKETA). Cena dopravy se nastavuje zvlášť pro každou '
+        'kombinaci dopravce a typu doručení (viz `/admin/shipping-prices`) - '
+        'tahle tabulka slouží jen k výběru dopravce v checkoutu a u '
+        'objednávky.'
     ),
 )
 class AdminCarrierViewSet(LookupAdminViewSet):
@@ -31,45 +31,30 @@ class AdminCarrierViewSet(LookupAdminViewSet):
     search_fields = ['name', 'code']
 
 
-@extend_schema_view(
-    list=extend_schema(
-        tags=['Admin - číselníky'],
-        summary='Zobrazit cenu dopravy',
-        description=(
-            'Jedna cena dopravy platná pro celý e-shop (haléře), bez ohledu na '
-            'dopravce nebo typ doručení. `price: null` znamená, že ji admin '
-            'ještě nenastavil - dokud se nenastaví, `POST /orders` nechá '
-            '`shippingCost` prázdné a cenu dopravy nastavuje admin ručně u '
-            'každé objednávky, jako doteď.'
-        ),
-        responses={200: AdminShippingPriceSerializer},
-    ),
-    update=extend_schema(
-        tags=['Admin - číselníky'],
-        summary='Nastavit cenu dopravy',
-        description='Jen role ADMIN. `price` v haléřích (celé číslo, `0` = doprava vždy zdarma).',
-        request=AdminShippingPriceSerializer,
-        responses={200: AdminShippingPriceSerializer},
+@lookup_schema_view(
+    'cena dopravy', 'cen dopravy',
+    extra_note=(
+        'Jedna cena (haléře) pro každou kombinaci dopravce a typu doručení '
+        '(`PICKUP_POINT`/`HOME_DELIVERY` - `PERSONAL_PICKUP` sem nepatří, je '
+        'vždy zdarma bez ohledu na cokoliv tady nastavené). Bez řádku pro '
+        'danou kombinaci zůstává `shippingCost` u objednávky/košíku `null` a '
+        'cenu dopravy nastavuje admin ručně, jako doteď. Duplicitní '
+        'kombinace dopravce + typu doručení vrátí 400.'
     ),
 )
-class AdminShippingPriceView(viewsets.ViewSet):
-    """GET/PUT /admin/shipping-price - singleton cena dopravy pro celý e-shop."""
+class AdminShippingPriceViewSet(LookupAdminViewSet):
+    """Ceny dopravy podle dopravce a typu doručení."""
+    queryset = ShippingPrice.objects.select_related('carrier').all()
+    serializer_class = AdminShippingPriceSerializer
 
-    def get_permissions(self):
-        if self.request.method == 'GET':
-            return [IsStaffOrAdmin()]
-        return [IsAdmin()]
-
-    def list(self, request):
-        serializer = AdminShippingPriceSerializer(ShippingPrice.get_solo())
-        return Response(serializer.data)
-
-    def update(self, request):
-        instance = ShippingPrice.get_solo()
-        serializer = AdminShippingPriceSerializer(instance, data=request.data)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data)
+    def get_queryset(self):
+        # Not calling super().get_queryset(): LookupAdminViewSet orders by
+        # ('position', 'name') which this model doesn't have.
+        queryset = self.queryset
+        carrier_id = self.request.query_params.get('carrier')
+        if carrier_id:
+            queryset = queryset.filter(carrier_id=carrier_id)
+        return queryset.order_by('carrier__name', 'delivery_type')
 
 
 @extend_schema_view(
@@ -115,17 +100,20 @@ class AdminPacketaConfigView(viewsets.ViewSet):
 @lookup_schema_view(
     'slevový práh', 'slevových prahů',
     extra_note=(
-        '`minQuantity` je celkový počet kusů v objednávce (součet `quantity` '
-        'přes všechny položky), od kterého práh platí. `discountPercent` '
-        '0-100 (`100` = doprava od tohoto počtu kusů zdarma) se odečítá ze '
-        'základní ceny dopravy (`GET /admin/shipping-price`). Platí práh s '
+        '`shippingPriceId` (povinné) určuje, ke které kombinaci dopravce + '
+        'typu doručení práh patří - každá kombinace má svou vlastní sadu '
+        'prahů (viz `/admin/shipping-prices`). `minQuantity` je celkový '
+        'počet kusů v objednávce (součet `quantity` přes všechny položky), '
+        'od kterého práh platí, unikátní jen uvnitř jedné `shippingPriceId`. '
+        '`discountPercent` 0-100 (`100` = doprava od tohoto počtu kusů '
+        'zdarma) se odečítá ze základní ceny té kombinace. Platí práh s '
         'nejvyšším `minQuantity`, který objednávka splňuje; bez shody platí '
         'plná cena.'
     ),
 )
 class AdminShippingQuantityDiscountViewSet(LookupAdminViewSet):
-    """Slevové prahy dopravy podle počtu kusů v objednávce (např. 30+ ks -30 %, 50+ ks zdarma)."""
-    queryset = ShippingQuantityDiscount.objects.all()
+    """Slevové prahy dopravy podle počtu kusů v objednávce, pro danou kombinaci dopravce + typu doručení."""
+    queryset = ShippingQuantityDiscount.objects.select_related('shipping_price__carrier').all()
     serializer_class = AdminShippingQuantityDiscountSerializer
 
     def get_queryset(self):
@@ -137,5 +125,8 @@ class AdminShippingQuantityDiscountViewSet(LookupAdminViewSet):
         is_active = self.request.query_params.get('isActive')
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active.lower() in ('1', 'true', 'yes'))
+        shipping_price_id = self.request.query_params.get('shippingPriceId')
+        if shipping_price_id:
+            queryset = queryset.filter(shipping_price_id=shipping_price_id)
 
         return queryset.order_by('min_quantity')

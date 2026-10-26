@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Carrier, PacketaConfig, ShippingPrice, ShippingQuantityDiscount
+from .models import SHIPPING_PRICE_DELIVERY_TYPE_CHOICES, Carrier, PacketaConfig, ShippingPrice, ShippingQuantityDiscount
 
 
 class AdminCarrierSerializer(serializers.ModelSerializer):
@@ -13,9 +13,13 @@ class AdminCarrierSerializer(serializers.ModelSerializer):
 
 
 class AdminShippingPriceSerializer(serializers.ModelSerializer):
+    carrier_id = serializers.PrimaryKeyRelatedField(source='carrier', queryset=Carrier.objects.all())
+    carrier_name = serializers.CharField(source='carrier.name', read_only=True)
+    delivery_type = serializers.ChoiceField(choices=SHIPPING_PRICE_DELIVERY_TYPE_CHOICES)
+
     class Meta:
         model = ShippingPrice
-        fields = ['price', 'updated_at']
+        fields = ['id', 'carrier_id', 'carrier_name', 'delivery_type', 'price', 'updated_at']
         read_only_fields = ['updated_at']
 
 
@@ -27,9 +31,11 @@ class AdminPacketaConfigSerializer(serializers.ModelSerializer):
 
 
 class AdminShippingQuantityDiscountSerializer(serializers.ModelSerializer):
+    shipping_price_id = serializers.PrimaryKeyRelatedField(source='shipping_price', queryset=ShippingPrice.objects.all())
+
     class Meta:
         model = ShippingQuantityDiscount
-        fields = ['id', 'min_quantity', 'discount_percent', 'position', 'is_active']
+        fields = ['id', 'shipping_price_id', 'min_quantity', 'discount_percent', 'position', 'is_active']
 
     def validate_discount_percent(self, value):
         if not (0 <= value <= 100):

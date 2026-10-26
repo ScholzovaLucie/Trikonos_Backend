@@ -65,11 +65,14 @@ class CartValidateView(APIView):
             'před odeslením objednávky.\n\n'
             'Volej při každém otevření košíku (ceny/aktivita motivů se mohly '
             'mezitím změnit) a znovu těsně před `POST /orders`.\n\n'
-            '`shippingCost` je cena dopravy podle aktuálního ceníku (jedna '
-            'cena pro celý e-shop, se slevou podle celkového počtu kusů v '
-            'košíku) - `null`, pokud ji admin ještě nenastavil v '
-            '`/admin/shipping-price`. `total` = `subtotal + shippingCost`, '
-            '`null`, pokud je cokoliv z toho `null`.'
+            '`carrierId`/`deliveryType` jsou nepovinné - bez nich (zákazník '
+            'ještě nevybral dopravu) je `shippingCost` i `total` `null`. '
+            'S vybranou dopravou je `shippingCost` cena pro tu konkrétní '
+            'kombinaci dopravce + typu doručení (se slevou podle celkového '
+            'počtu kusů v košíku), `null` pokud ji admin pro tuto kombinaci '
+            'ještě nenastavil v `/admin/shipping-prices`. `PERSONAL_PICKUP` '
+            '(osobní odběr) je vždy zdarma, bez `carrierId`. `total` = '
+            '`subtotal + shippingCost`, `null`, pokud je cokoliv z toho `null`.'
         ),
         request=CartValidateSerializer,
         responses={200: CartValidateResponseSerializer},
@@ -103,7 +106,13 @@ class CartValidateView(APIView):
                 any_unpriced = True
 
         subtotal = None if any_unpriced else subtotal
-        shipping_cost = calculate_shipping_cost(total_quantity=total_quantity) if line_results else None
+        shipping_cost = None
+        if line_results:
+            shipping_cost = calculate_shipping_cost(
+                carrier=serializer.validated_data.get('carrier'),
+                delivery_type=serializer.validated_data.get('delivery_type'),
+                total_quantity=total_quantity,
+            )
         total = subtotal + shipping_cost if subtotal is not None and shipping_cost is not None else None
 
         return Response({

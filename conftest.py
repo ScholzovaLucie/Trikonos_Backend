@@ -1,6 +1,12 @@
 import pytest
 
 from catalog.models import Category, Color, Cut, PrintArea, ProductType, Motif
+from shipping.models import Carrier
+
+
+@pytest.fixture
+def carrier(db):
+    return Carrier.objects.create(code='PACKETA', name='Zásilkovna')
 
 
 @pytest.fixture
