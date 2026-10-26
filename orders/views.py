@@ -64,12 +64,19 @@ class CartValidateView(APIView):
             'frontend podle toho může zobrazit "cenu potvrdíme e-mailem" ještě '
             'před odeslením objednávky.\n\n'
             'Volej při každém otevření košíku (ceny/aktivita motivů se mohly '
-            'mezitím změnit) a znovu těsně před `POST /orders`.'
+            'mezitím změnit) a znovu těsně před `POST /orders`.\n\n'
+            '`shippingCost` je cena dopravy podle aktuálního ceníku (jedna '
+            'cena pro celý e-shop, se slevou podle celkového počtu kusů v '
+            'košíku) - `null`, pokud ji admin ještě nenastavil v '
+            '`/admin/shipping-price`. `total` = `subtotal + shippingCost`, '
+            '`null`, pokud je cokoliv z toho `null`.'
         ),
         request=CartValidateSerializer,
         responses={200: CartValidateResponseSerializer},
     )
     def post(self, request):
+        from shipping.services import calculate_shipping_cost
+
         serializer = CartValidateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -77,11 +84,13 @@ class CartValidateView(APIView):
         subtotal = 0
         any_unpriced = False
         requires_quote = False
+        total_quantity = 0
 
         for raw_item in serializer.validated_data['items']:
             item = OrderItemInputSerializer.to_service_item(raw_item)
             result = services.validate_cart_item(item)
             line_results.append(result)
+            total_quantity += item['quantity']
 
             if item['is_custom']:
                 requires_quote = True
@@ -93,10 +102,16 @@ class CartValidateView(APIView):
             else:
                 any_unpriced = True
 
+        subtotal = None if any_unpriced else subtotal
+        shipping_cost = calculate_shipping_cost(total_quantity=total_quantity) if line_results else None
+        total = subtotal + shipping_cost if subtotal is not None and shipping_cost is not None else None
+
         return Response({
             'items': line_results,
-            'subtotal': None if any_unpriced else subtotal,
+            'subtotal': subtotal,
             'requires_quote': requires_quote,
+            'shipping_cost': shipping_cost,
+            'total': total,
         })
 
 

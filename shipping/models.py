@@ -1,12 +1,14 @@
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
-from core.models import SimpleLookup
+from core.models import SimpleLookup, UUIDModel
 
 
 class Carrier(SimpleLookup):
-    """Delivery carrier. No pricing/capability flags - shipping cost is
-    priced manually by admin per order (orders.shipping_cost).
+    """Delivery carrier. No pricing/capability flags - the shop has a
+    single shipping price (see ShippingPrice below), independent of which
+    carrier is chosen; admin still sets Order.shipping_cost manually
+    whenever automatic pricing doesn't apply.
     """
     code = models.CharField(max_length=50, unique=True, help_text='Internal code, e.g. PACKETA')
 
@@ -14,3 +16,63 @@ class Carrier(SimpleLookup):
         db_table = 'carriers'
         verbose_name = _('carrier')
         verbose_name_plural = _('carriers')
+
+
+class ShippingPrice(models.Model):
+    """Singleton: the shop's one shipping price, in haléře, before any
+    quantity discount from ShippingQuantityDiscount. Always exactly one
+    row (pk=1). `price = NULL` means admin hasn't configured it yet -
+    automatic shipping pricing is then skipped and admin keeps pricing
+    shipping manually per order, same as before this feature existed.
+    """
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    price = models.PositiveIntegerField(null=True, blank=True, help_text='In haléře; NULL = not configured yet.')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'shipping_price'
+        verbose_name = _('shipping price')
+        verbose_name_plural = _('shipping price')
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get_solo(cls):
+        obj, _created = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return 'Cena dopravy'
+
+
+class ShippingQuantityDiscount(UUIDModel):
+    """Quantity-based discount tier on top of ShippingPrice.price, e.g.
+    'from 30 pieces, 30% off; from 50 pieces, free'. For a given order, the
+    tier with the highest min_quantity at or below the order's total item
+    quantity (summed across all order_items, regardless of unit price)
+    wins; if none match, the full ShippingPrice.price applies.
+    """
+    min_quantity = models.PositiveIntegerField(unique=True, help_text='Total item quantity in the order, inclusive.')
+    discount_percent = models.PositiveIntegerField(help_text='0-100; 100 means free shipping from this quantity.')
+    position = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'shipping_quantity_discounts'
+        ordering = ['min_quantity']
+        verbose_name = _('shipping quantity discount')
+        verbose_name_plural = _('shipping quantity discounts')
+        constraints = [
+            models.CheckConstraint(condition=models.Q(min_quantity__gte=1), name='shipping_discount_min_quantity_positive'),
+            models.CheckConstraint(
+                condition=models.Q(discount_percent__gte=0) & models.Q(discount_percent__lte=100),
+                name='shipping_discount_percent_range',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.min_quantity}+ ks → -{self.discount_percent}%'

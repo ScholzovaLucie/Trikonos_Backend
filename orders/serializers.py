@@ -373,6 +373,8 @@ class CartValidateResponseSerializer(serializers.Serializer):
     items = CartValidateLineResultSerializer(many=True)
     subtotal = serializers.IntegerField(allow_null=True)
     requires_quote = serializers.BooleanField()
+    shipping_cost = serializers.IntegerField(allow_null=True)
+    total = serializers.IntegerField(allow_null=True)
 
 
 class DesignUploadRequestSerializer(serializers.Serializer):

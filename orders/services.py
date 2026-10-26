@@ -228,6 +228,26 @@ def recalculate_totals(order):
     return order
 
 
+def _apply_automatic_shipping_cost(order, *, total_quantity):
+    """Fills Order.shipping_cost from the admin-managed shop-wide shipping
+    price (shipping.services.calculate_shipping_cost) at order creation
+    time. Unlike item pricing, this only depends on total item quantity,
+    not unit prices - it applies even to a QUOTE_REQUESTED order where some
+    items still await admin pricing. Leaves shipping_cost NULL if admin
+    hasn't configured a base price yet, same as before this feature existed.
+    An admin-supplied shippingCost on manual order creation is applied by
+    the caller (OrderCreateSerializer.create) right after this and
+    overrides whatever this sets.
+    """
+    from shipping.services import calculate_shipping_cost
+
+    cost = calculate_shipping_cost(total_quantity=total_quantity)
+    if cost is not None:
+        order.shipping_cost = cost
+        order.save(update_fields=['shipping_cost', 'updated_at'])
+        recalculate_totals(order)
+
+
 # ---------------------------------------------------------------------------
 # Order creation - customer + order + items + placements, one transaction.
 # ---------------------------------------------------------------------------
@@ -255,6 +275,7 @@ def create_order(*, customer_data, billing_data, shipping_data, delivery_data, p
         build_order_item(order, item_data)
 
     recalculate_totals(order)
+    _apply_automatic_shipping_cost(order, total_quantity=sum(item['quantity'] for item in items_data))
 
     from .emails import send_order_received_email, send_shop_notification_email
     transaction.on_commit(lambda: send_order_received_email(order))

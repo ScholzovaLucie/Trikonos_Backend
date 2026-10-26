@@ -7,7 +7,7 @@ from django.utils.text import slugify
 
 from accounts.models import StaffRole
 from catalog.models import Category, Color, Cut, Motif, PrintArea, ProductType
-from shipping.models import Carrier
+from shipping.models import Carrier, ShippingPrice, ShippingQuantityDiscount
 
 User = get_user_model()
 
@@ -47,6 +47,13 @@ PRODUCT_TYPES_WITH_PRINT_AREAS = {
 
 CATEGORIES = ['Pánská trička', 'Dámská trička', 'Mikiny', 'Doplňky', 'Kolekce', 'Týmové akce']
 
+SHIPPING_PRICE = 5000  # 50 Kč
+
+SHIPPING_QUANTITY_DISCOUNTS = [
+    (30, 30),  # 30+ ks -> -30 %
+    (50, 100),  # 50+ ks -> zdarma
+]
+
 TEST_MOTIFS = [
     ('Bitcoin', 'Pánská trička', 59900, 'Minimalistický symbol Bitcoinu.'),
     ('Krkonoše - západ slunce', 'Kolekce', 64900, 'Silueta hor při večerním slunci.'),
@@ -72,6 +79,7 @@ class Command(BaseCommand):
         self._seed_print_areas(product_types)
         categories = self._seed_categories()
         self._seed_carrier()
+        self._seed_shipping_price()
         self._seed_admin()
         self._seed_motifs(categories)
         self.stdout.write(self.style.SUCCESS('Seed data ready.'))
@@ -116,6 +124,17 @@ class Command(BaseCommand):
         Carrier.objects.update_or_create(
             code='PACKETA', defaults={'name': 'Zásilkovna', 'position': 0},
         )
+
+    def _seed_shipping_price(self):
+        price = ShippingPrice.get_solo()
+        if price.price is None:
+            price.price = SHIPPING_PRICE
+            price.save()
+
+        for position, (min_quantity, discount_percent) in enumerate(SHIPPING_QUANTITY_DISCOUNTS):
+            ShippingQuantityDiscount.objects.update_or_create(
+                min_quantity=min_quantity, defaults={'discount_percent': discount_percent, 'position': position},
+            )
 
     def _seed_admin(self):
         email = os.environ.get('ADMIN_EMAIL')

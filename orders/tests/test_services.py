@@ -6,6 +6,7 @@ from core.exceptions import BusinessError, InvalidStatusTransitionError, OrderLo
 from customers.models import Customer
 from orders import services
 from orders.models import Order, OrderStatus, PaymentMethod, PaymentStatus
+from shipping.models import ShippingPrice, ShippingQuantityDiscount
 
 pytestmark = pytest.mark.django_db
 
@@ -279,3 +280,87 @@ def test_price_change_on_confirmed_order_resets_confirmed_at(product_type, cut, 
     services.set_shipping_cost(order, 500)
     order.refresh_from_db()
     assert order.confirmed_at is None
+
+
+# ---------------------------------------------------------------------------
+# Automatic shipping cost (shop-wide price + quantity discount tiers).
+# ---------------------------------------------------------------------------
+
+def test_shipping_cost_stays_null_without_a_configured_base_price(motif, product_type, cut, color):
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 2, 'placements': [],
+    }]
+
+    order = _make_order(items)
+
+    assert order.shipping_cost is None
+    assert order.total is None
+
+
+def test_automatic_shipping_cost_uses_base_price(motif, product_type, cut, color):
+    ShippingPrice.objects.update_or_create(pk=1, defaults={'price': 5000})
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 2, 'placements': [],
+    }]
+
+    order = _make_order(items)
+
+    assert order.shipping_cost == 5000
+    assert order.total == motif.price * 2 + 5000
+
+
+def test_automatic_shipping_cost_applies_best_matching_quantity_discount(motif, product_type, cut, color):
+    ShippingPrice.objects.update_or_create(pk=1, defaults={'price': 5000})
+    ShippingQuantityDiscount.objects.create(min_quantity=30, discount_percent=30)
+    ShippingQuantityDiscount.objects.create(min_quantity=50, discount_percent=100)
+
+    items_30 = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 30, 'placements': [],
+    }]
+    order_30 = _make_order(items_30, email='thirty@example.cz')
+    assert order_30.shipping_cost == 3500  # 5000 * (1 - 0.30)
+
+    items_50 = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 50, 'placements': [],
+    }]
+    order_50 = _make_order(items_50, email='fifty@example.cz')
+    assert order_50.shipping_cost == 0  # 100% discount from the 50+ tier
+
+
+def test_automatic_shipping_cost_ignores_inactive_discount_tier(motif, product_type, cut, color):
+    ShippingPrice.objects.update_or_create(pk=1, defaults={'price': 5000})
+    ShippingQuantityDiscount.objects.create(min_quantity=30, discount_percent=100, is_active=False)
+
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 30, 'placements': [],
+    }]
+    order = _make_order(items)
+
+    assert order.shipping_cost == 5000  # the only tier is inactive, so no discount applies
+
+
+def test_automatic_shipping_cost_applies_even_while_items_await_a_quote(product_type, cut, color, print_area):
+    """Shipping only depends on total item quantity, never on unit price -
+    it's priced automatically even for a custom item still awaiting an
+    admin quote, while `total` itself stays NULL until the item is priced.
+    """
+    ShippingPrice.objects.update_or_create(pk=1, defaults={'price': 5000})
+    items = [{
+        'is_custom': True, 'motif': None, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'L', 'quantity': 3,
+        'placements': [{
+            'print_area': print_area, 'url': 'x', 'x': 0, 'y': 0, 'width': 100, 'height': 100, 'rotation_deg': 0,
+        }],
+    }]
+
+    order = _make_order(items)
+
+    assert order.status == OrderStatus.QUOTE_REQUESTED
+    assert order.shipping_cost == 5000
+    assert order.subtotal is None
+    assert order.total is None  # still unknown - the item itself has no price yet
