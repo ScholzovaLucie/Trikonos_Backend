@@ -23,6 +23,7 @@ from .models import Carrier, PacketaConfig, ShippingPrice, ShippingQuantityDisco
         'tahle tabulka slouží jen k výběru dopravce v checkoutu a u '
         'objednávky.'
     ),
+    tag='Admin - doprava',
 )
 class AdminCarrierViewSet(LookupAdminViewSet):
     """Dopravci (Zásilkovna, DPD, ...), nabízení zákazníkovi při checkoutu."""
@@ -41,6 +42,7 @@ class AdminCarrierViewSet(LookupAdminViewSet):
         'cenu dopravy nastavuje admin ručně, jako doteď. Duplicitní '
         'kombinace dopravce + typu doručení vrátí 400.'
     ),
+    tag='Admin - doprava',
 )
 class AdminShippingPriceViewSet(LookupAdminViewSet):
     """Ceny dopravy podle dopravce a typu doručení."""
@@ -59,7 +61,7 @@ class AdminShippingPriceViewSet(LookupAdminViewSet):
 
 @extend_schema_view(
     list=extend_schema(
-        tags=['Admin - číselníky'],
+        tags=['Admin - doprava'],
         summary='Zobrazit nastavení Packety',
         description=(
             'Přihlašovací údaje a nastavení pro napojení na Packeta '
@@ -74,7 +76,7 @@ class AdminShippingPriceViewSet(LookupAdminViewSet):
         responses={200: AdminPacketaConfigSerializer},
     ),
     update=extend_schema(
-        tags=['Admin - číselníky'],
+        tags=['Admin - doprava'],
         summary='Nastavit napojení na Packetu',
         description='Jen role ADMIN.',
         request=AdminPacketaConfigSerializer,
@@ -110,6 +112,7 @@ class AdminPacketaConfigView(viewsets.ViewSet):
         'nejvyšším `minQuantity`, který objednávka splňuje; bez shody platí '
         'plná cena.'
     ),
+    tag='Admin - doprava',
 )
 class AdminShippingQuantityDiscountViewSet(LookupAdminViewSet):
     """Slevové prahy dopravy podle počtu kusů v objednávce, pro danou kombinaci dopravce + typu doručení."""

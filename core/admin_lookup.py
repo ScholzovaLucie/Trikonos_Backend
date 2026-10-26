@@ -18,16 +18,19 @@ class ReorderSerializer(serializers.Serializer):
     ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=False)
 
 
-def lookup_schema_view(entity, entity_plural, extra_note=''):
+def lookup_schema_view(entity, entity_plural, extra_note='', tag='Admin - číselníky'):
     """Czech @extend_schema_view shared by every LookupAdminViewSet subclass -
     list/retrieve/create/partial_update/destroy/reorder differ only by the
     entity's name, not by behaviour, so this is parametrized once instead of
-    repeated six times (categories/colors/cuts/product-types/print-areas/carriers).
+    repeated for each lookup table. `tag` defaults to the generic catalog
+    taxonomy group but can be overridden (e.g. shipping's carrier/price
+    lookups use 'Admin - doprava' instead) so Swagger groups them with
+    their actual domain rather than dumping everything into one bucket.
     """
     note_suffix = f' {extra_note}' if extra_note else ''
     return extend_schema_view(
         list=extend_schema(
-            tags=['Admin - číselníky'],
+            tags=[tag],
             summary=f'Seznam {entity_plural}',
             description=(
                 f'Vrátí VŠECHNY {entity_plural} včetně neaktivních (na rozdíl od '
@@ -36,22 +39,22 @@ def lookup_schema_view(entity, entity_plural, extra_note=''):
             ),
         ),
         retrieve=extend_schema(
-            tags=['Admin - číselníky'],
+            tags=[tag],
             summary=f'Detail {entity}',
             description=f'Detail jedné položky z {entity_plural} podle `id`.',
         ),
         create=extend_schema(
-            tags=['Admin - číselníky'],
+            tags=[tag],
             summary=f'Vytvořit {entity}',
             description=f'Jen role ADMIN.{note_suffix}',
         ),
         partial_update=extend_schema(
-            tags=['Admin - číselníky'],
+            tags=[tag],
             summary=f'Upravit {entity}',
             description=f'Jen role ADMIN. Částečná úprava (PATCH) - pošli jen pole, která měníš.{note_suffix}',
         ),
         destroy=extend_schema(
-            tags=['Admin - číselníky'],
+            tags=[tag],
             summary=f'Smazat {entity}',
             description=(
                 f'Jen role ADMIN. Pokud je {entity} použitý v objednávce nebo motivu '
@@ -60,7 +63,7 @@ def lookup_schema_view(entity, entity_plural, extra_note=''):
             ),
         ),
         reorder=extend_schema(
-            tags=['Admin - číselníky'],
+            tags=[tag],
             summary=f'Změnit pořadí {entity_plural}',
             description=(
                 'Tělo `{"ids": ["uuid1", "uuid2", ...]}` v požadovaném pořadí - server '

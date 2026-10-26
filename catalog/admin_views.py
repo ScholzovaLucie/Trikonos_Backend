@@ -26,6 +26,7 @@ class AdminCategoryViewSet(LookupAdminViewSet):
 @lookup_schema_view(
     'barvu', 'barev',
     extra_note='`hexValue` musí být ve formátu `#RRGGBB`.',
+    tag='Admin - varianty',
 )
 class AdminColorViewSet(LookupAdminViewSet):
     """Barvy oblečení, nabízené při výběru produktu."""
@@ -33,7 +34,7 @@ class AdminColorViewSet(LookupAdminViewSet):
     serializer_class = AdminColorSerializer
 
 
-@lookup_schema_view('střih', 'střihů')
+@lookup_schema_view('střih', 'střihů', tag='Admin - varianty')
 class AdminCutViewSet(LookupAdminViewSet):
     """Střihy (Pánské, Dámské, Unisex, ...)."""
     queryset = Cut.objects.all()

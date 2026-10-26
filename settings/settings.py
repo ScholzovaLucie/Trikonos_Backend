@@ -104,6 +104,34 @@ SPECTACULAR_SETTINGS = {
     'SERVE_INCLUDE_SCHEMA': False,
     'SCHEMA_PATH_PREFIX': '/api/v1/',
     'CAMELIZE_NAMES': True,
+    # Explicit order + description instead of drf-spectacular's default
+    # alphabetical sort - without this Swagger UI interleaves public and
+    # admin sections and "Admin - číselníky" reads as a random grab-bag.
+    # Order follows an admin's actual workflow: login, then day-to-day
+    # order handling, then the less frequently touched setup/config areas.
+    'TAGS': [
+        {'name': 'Katalog', 'description': 'Veřejné procházení katalogu - motivy, typy oblečení, barvy, střihy, tiskové bloky.'},
+        {'name': 'Konfigurace', 'description': 'Veřejná konfigurace e-shopu pro frontend (kontakty, číselníky pro checkout).'},
+        {'name': 'Checkout', 'description': 'Veřejný košík a vytvoření objednávky, bez přihlášení.'},
+        {'name': 'Admin - přihlášení', 'description': 'Přihlášení a odhlášení do administrace.'},
+        {'name': 'Admin - přehled', 'description': 'Globální vyhledávání napříč objednávkami, zákazníky a motivy.'},
+        {'name': 'Admin - objednávky', 'description': 'Správa objednávek - ceny, stavy, doprava, Packeta zásilky, e-maily.'},
+        {'name': 'Admin - výroba', 'description': 'Podklady pro výrobu - tiskové soubory a výrobní listy.'},
+        {'name': 'Admin - zákazníci', 'description': 'Správa zákazníků a jejich historie objednávek.'},
+        {'name': 'Admin - motivy', 'description': 'Správa motivů a jejich cen.'},
+        {'name': 'Admin - doprava', 'description': 'Dopravci, ceny dopravy podle typu doručení, slevové prahy, napojení na Packetu.'},
+        {'name': 'Admin - číselníky', 'description': 'Struktura katalogu - kategorie, typy oblečení, tiskové bloky.'},
+        {'name': 'Admin - varianty', 'description': 'Vzhledové varianty produktu, vybírané u konkrétní položky - barvy a střihy.'},
+        {'name': 'Admin - uživatelé', 'description': 'Správa uživatelských účtů administrace.'},
+    ],
+    # shipping.ShippingPrice.delivery_type reuses orders.DeliveryType's two
+    # non-personal-pickup values as a plain choices list (not an import -
+    # see shipping/models.py) - same field name, different enum, so
+    # drf-spectacular can't auto-name it without this override.
+    'ENUM_NAME_OVERRIDES': {
+        'DeliveryTypeEnum': 'orders.models.DeliveryType',
+        'ShippingPriceDeliveryTypeEnum': 'shipping.models.SHIPPING_PRICE_DELIVERY_TYPE_CHOICES',
+    },
 }
 
 MIDDLEWARE = [
