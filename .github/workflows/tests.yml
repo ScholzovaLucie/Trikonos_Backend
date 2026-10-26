@@ -1,0 +1,53 @@
+name: Tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: trikonos
+          POSTGRES_USER: trikonos
+          POSTGRES_PASSWORD: trikonos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DJANGO_SECRET_KEY: ci-test-secret-key
+      DJANGO_DEBUG: "True"
+      DB_NAME: trikonos
+      DB_USER: trikonos
+      DB_PASSWORD: trikonos
+      DB_HOST: localhost
+      DB_PORT: "5432"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Django checks
+        run: |
+          python manage.py check
+          python manage.py makemigrations --check --no-input
+
+      - name: Run tests
+        run: pytest --ignore=implementation_rules
