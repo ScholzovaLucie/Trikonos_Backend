@@ -236,6 +236,80 @@ def test_staff_cannot_refund_only_admin_can(motif, product_type, cut, color):
     assert order.payment_status == PaymentStatus.REFUNDED
 
 
+def test_cash_on_delivery_paid_transition_redirects_without_marking_paid(motif, product_type, cut, color):
+    """NEW->PAID on a COD order lands on PROCESSING (money isn't collected
+    yet - the carrier takes it on delivery) and must NOT mark
+    payment_status PAID prematurely, even though that's exactly what
+    happens for every other payment method on this same transition.
+    """
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+    order = _make_order(items, payment_method=PaymentMethod.CASH_ON_DELIVERY)
+    services.set_shipping_cost(order, 0)
+    order.refresh_from_db()
+
+    services.transition_order_status(order, OrderStatus.PAID, is_admin=False)
+    order.refresh_from_db()
+
+    assert order.status == OrderStatus.PROCESSING
+    assert order.payment_status == PaymentStatus.PENDING
+
+
+def test_cash_on_delivery_marks_paid_only_on_delivery(motif, product_type, cut, color, carrier):
+    """The carrier collects the cash at the doorstep - payment_status only
+    becomes PAID once the order actually reaches DELIVERED.
+    """
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+    order = _make_order(items, payment_method=PaymentMethod.CASH_ON_DELIVERY, delivery_data=_home_delivery(carrier))
+    services.set_shipping_cost(order, 0)
+    order.refresh_from_db()
+
+    services.transition_order_status(order, OrderStatus.PAID, is_admin=False)  # -> PROCESSING
+    order.refresh_from_db()
+    services.transition_order_status(order, OrderStatus.SHIPPED, is_admin=False)
+    order.refresh_from_db()
+    assert order.payment_status == PaymentStatus.PENDING  # still not paid - not delivered yet
+
+    services.transition_order_status(order, OrderStatus.DELIVERED, is_admin=False)
+    order.refresh_from_db()
+    assert order.status == OrderStatus.DELIVERED
+    assert order.payment_status == PaymentStatus.PAID
+
+
+def test_bank_transfer_delivery_does_not_auto_mark_paid(motif, product_type, cut, color, carrier):
+    """The COD auto-paid-on-delivery rule is COD-specific - a bank transfer
+    order reaching DELIVERED must not be silently marked paid just because
+    it was delivered (bank transfer payment confirmation is a separate,
+    explicit step).
+    """
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+    order = _make_order(items, payment_method=PaymentMethod.BANK_TRANSFER, delivery_data=_home_delivery(carrier))
+    services.set_shipping_cost(order, 0)
+    order.refresh_from_db()
+
+    services.transition_order_status(order, OrderStatus.PAID, is_admin=False)
+    order.refresh_from_db()
+    assert order.status == OrderStatus.PAID
+    assert order.payment_status == PaymentStatus.PAID  # unaffected by the resulting_status fix
+
+    services.transition_order_status(order, OrderStatus.PROCESSING, is_admin=False)
+    order.refresh_from_db()
+    services.transition_order_status(order, OrderStatus.SHIPPED, is_admin=False)
+    order.refresh_from_db()
+    services.transition_order_status(order, OrderStatus.DELIVERED, is_admin=False)
+    order.refresh_from_db()
+    assert order.status == OrderStatus.DELIVERED
+    assert order.payment_status == PaymentStatus.PAID  # already was, not re-derived from delivery
+
+
 def test_editing_price_in_locked_state_raises_order_locked(motif, product_type, cut, color):
     items = [{
         'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,

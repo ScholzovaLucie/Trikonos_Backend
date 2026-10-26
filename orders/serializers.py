@@ -213,7 +213,10 @@ class OrderCreateSerializer(serializers.Serializer):
         }
         delivery = validated_data['delivery']
         delivery_data = {
-            'carrier': delivery['carrier'],
+            # .get(), not ['carrier'] - carrier_id is optional (PERSONAL_PICKUP
+            # has none), so a request that omits it entirely leaves the key
+            # missing from validated_data rather than present-and-None.
+            'carrier': delivery.get('carrier'),
             'delivery_type': delivery['delivery_type'],
             'pickup_point_id': delivery.get('pickup_point_id', ''),
             'pickup_point_name': delivery.get('pickup_point_name', ''),

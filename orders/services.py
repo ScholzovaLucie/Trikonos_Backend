@@ -472,13 +472,19 @@ def transition_order_status(order, target_status, *, is_admin):
 
     order.status = resulting_status
 
-    if target_status == OrderStatus.PAID:
+    # Checked against resulting_status, not target_status - a COD order
+    # redirected PAID->PROCESSING above must NOT be marked paid here (the
+    # money hasn't been collected yet). It only becomes PAID at DELIVERED
+    # below, when the carrier has actually handed over the cash.
+    if resulting_status == OrderStatus.PAID:
         order.payment_status = PaymentStatus.PAID
     if target_status == OrderStatus.SHIPPED:
         if _shipment_status_rank(order.shipment_status) < _shipment_status_rank(ShipmentStatus.HANDED_OVER):
             order.shipment_status = ShipmentStatus.HANDED_OVER
     if target_status == OrderStatus.DELIVERED:
         order.shipment_status = ShipmentStatus.DELIVERED
+        if order.payment_method == PaymentMethod.CASH_ON_DELIVERY:
+            order.payment_status = PaymentStatus.PAID
     if target_status == OrderStatus.REFUNDED:
         order.payment_status = PaymentStatus.REFUNDED
 
