@@ -41,6 +41,7 @@ class CartValidateView(APIView):
     """POST /cart/validate - never persists anything. Each line gets its own
     verdict so the frontend can show which rows are broken before checkout.
     """
+    throttle_scope = 'public-write'
     permission_classes = [AllowAny]
 
     @extend_schema(
@@ -75,10 +76,14 @@ class CartValidateView(APIView):
             '`paymentMethod` - s `CASH_ON_DELIVERY` `shippingCost` zahrnuje '
             'i příplatek za dobírku (`/admin/cod-surcharge`); bez něj se '
             'příplatek do náhledu nepromítne. `total` = `subtotal + '
-            'shippingCost`, `null`, pokud je cokoliv z toho `null`.'
+            'shippingCost`, `null`, pokud je cokoliv z toho `null`. Limit '
+            '10 požadavků/min na IP (`ScopedRateThrottle`) - při překročení 429.'
         ),
         request=CartValidateSerializer,
-        responses={200: CartValidateResponseSerializer},
+        responses={
+            200: CartValidateResponseSerializer,
+            429: OpenApiResponse(description='Překročen limit požadavků.'),
+        },
     )
     def post(self, request):
         from shipping.services import calculate_shipping_cost
@@ -321,6 +326,7 @@ class OrderAccessView(APIView):
     e-mails. Never exposed as a plain GET /orders/{id}.
     """
     permission_classes = [AllowAny]
+    throttle_scope = 'public-read'
 
     @extend_schema(
         tags=['Checkout'],
@@ -335,11 +341,13 @@ class OrderAccessView(APIView):
             'Tohle je jediný veřejný způsob, jak se dostat k detailu objednávky - '
             '**holé `GET /orders/{id}` bez tokenu veřejně neexistuje.** Odpověď '
             'obsahuje i `paymentInstructions` (účet, částka, variabilní symbol) '
-            'pokud je platba převodem a cena je už stanovená.'
+            'pokud je platba převodem a cena je už stanovená. Limit 30 '
+            'požadavků/min na IP (`ScopedRateThrottle`) - při překročení 429.'
         ),
         responses={
             200: OrderCustomerDetailSerializer,
             404: OpenApiResponse(description='Token je neplatný, podvržený nebo prošlý.'),
+            429: OpenApiResponse(description='Překročen limit požadavků.'),
         },
     )
     def get(self, request, access_token):

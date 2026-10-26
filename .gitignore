@@ -2,8 +2,12 @@
 __pycache__/
 *.pyc
 db.sqlite3
-.env
 .idea/
 staticfiles/
 media/
+# Real secrets stay out of git; the two files below are checked-in
+# templates/dev-only defaults, not secrets - needed for `docker-compose up`
+# and for new developers to know which env vars exist at all.
 .env*
+!.env.example
+!.env.docker

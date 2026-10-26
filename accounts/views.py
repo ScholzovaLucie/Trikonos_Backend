@@ -156,6 +156,7 @@ class PasswordResetRequestView(APIView):
     admin accounts.
     """
     permission_classes = [AllowAny]
+    throttle_scope = 'login'
 
     @extend_schema(
         tags=_TAG,
@@ -165,10 +166,15 @@ class PasswordResetRequestView(APIView):
             'patří existujícímu uživateli, pošle mu e-mail s odkazem na nastavení '
             'nového hesla (platnost řeší `PasswordResetTokenGenerator` z Django, '
             'typicky pár dní). **Vždy vrací 204**, i když e-mail neexistuje - jinak by '
-            'šlo podle rozdílné odpovědi zjistit, které e-maily v administraci existují.'
+            'šlo podle rozdílné odpovědi zjistit, které e-maily v administraci existují. '
+            'Limit 5 požadavků/min na IP (`ScopedRateThrottle`) proti zahlcení '
+            'cizí schránky e-maily.'
         ),
         request=PasswordResetRequestSerializer,
-        responses={204: OpenApiResponse(description='E-mail odeslán, pokud účet s daným e-mailem existuje.')},
+        responses={
+            204: OpenApiResponse(description='E-mail odeslán, pokud účet s daným e-mailem existuje.'),
+            429: OpenApiResponse(description='Překročen limit požadavků.'),
+        },
     )
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
