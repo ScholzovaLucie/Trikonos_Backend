@@ -25,8 +25,12 @@ load_dotenv(BASE_DIR / '.env')
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DJANGO_DEBUG', 'True') == 'True'
+# SECURITY WARNING: don't run with debug turned on in production! Defaults
+# to False (fail-closed) - unlike a dev convenience default of True, a
+# missing/misconfigured DJANGO_DEBUG in production would otherwise silently
+# expose tracebacks (SQL, local variables, settings). Local dev sets it
+# explicitly via .env (see .env.example).
+DEBUG = os.environ.get('DJANGO_DEBUG', 'False') == 'True'
 
 # SECURITY WARNING: keep the secret key used in production secret! The
 # insecure fallback below is only ever used in DEBUG (local dev without a
@@ -100,6 +104,10 @@ REST_FRAMEWORK = {
         'public-write': '10/min',
         'public-read': '30/min',
         'login': '5/min',
+        # order_number is a plain sequence (TRK-2026-00001) - a tighter rate
+        # than the general public-write scope makes guessing a valid
+        # number+e-mail pair slower, same budget as login attempts.
+        'order-lookup': '5/min',
     },
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'SEARCH_PARAM': 'q',
@@ -107,7 +115,70 @@ REST_FRAMEWORK = {
 
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Trikonoš.cz API',
-    'DESCRIPTION': 'Veřejné (storefront) a administrační API pro e-shop Trikonoš.cz.',
+    'DESCRIPTION': (
+        'Veřejné (storefront) a administrační API pro e-shop Trikonoš.cz.\n\n'
+        '## Testování přímo v tomto Swaggeru\n\n'
+        'Tlačítko **"Try it out"** zvládá přihlášení i CSRF automaticky - '
+        'samotné načtení této stránky nastaví cookie `csrftoken` a vloží '
+        'odpovídající hodnotu do požadavků, které odešleš přes "Execute". '
+        'Nemusíš nikam kopírovat žádný token ani vyplňovat žádné zvláštní '
+        'pole. Stačí: 1) "Try it out" na `POST /admin/auth/login`, vyplnit '
+        'e-mail/heslo, Execute. Prohlížeč si `sessionid` cookie uloží sám a '
+        'další "Try it out" požadavky na `/admin/...` ji použijí automaticky.\n\n'
+        '**Jediná věc, na kterou si dát pozor:** pokud jsi v této záložce už '
+        'dřív byla přihlášená (byť neúspěšně/omylem), prohlížeč tu starou '
+        '`sessionid` cookie pošle znovu i při dalším loginu, což CSRF kontrolu '
+        'vynutí jinak, než čekáš. Pokud "Try it out" na loginu vrátí CSRF '
+        'chybu, nejdřív zavolej "Try it out" na `POST /admin/auth/logout`, '
+        'nebo obnov stránku (F5) a zkus login znovu.\n\n'
+        '**Testování mimo Swagger** (curl, Postman, skutečný frontend) - '
+        'tam se CSRF neděje samo, tenhle automatismus je jen vlastnost '
+        'Swagger UI stránky. Postup pro to je níže.\n\n'
+        '## Přihlášení do administrace (`/admin/...`) z frontendu\n\n'
+        'Admin endpointy **nepoužívají Bearer token** - `POST /admin/auth/login` '
+        'nevrací žádný token, místo toho založí session přes cookie. Tři kroky, '
+        'v tomto pořadí, při každém novém spuštění frontendu:\n\n'
+        '1. `GET /admin/auth/csrf` - nastaví cookie `csrftoken` (čitelnou z JS, '
+        'není httpOnly). Žádné tělo v odpovědi, `204` je očekávaný výsledek.\n'
+        '2. `POST /admin/auth/login` s `email`/`password` v těle **a** headerem '
+        '`X-CSRFToken` (hodnota z cookie `csrftoken` z kroku 1). Při úspěchu '
+        'nastaví cookie `sessionid` (httpOnly - JS k ní nemá přístup, to je '
+        'záměr) a vrátí `{id, email, name, role}`. **To je celé "přihlášení" '
+        '- žádný token si nikam neukládej, prohlížeč už session cookie '
+        'má.**\n'
+        '3. Každý další request na `/admin/...` musí mít `credentials: '
+        '\'include\'` (ať prohlížeč pošle `sessionid`). Každý `POST`/`PUT`/'
+        '`PATCH`/`DELETE` navíc potřebuje header `X-CSRFToken` - vždy aktuální '
+        'hodnotu cookie `csrftoken` (Django ji může při requestech obnovovat, '
+        'čti z `document.cookie` znovu při každém requestu, neukládej si '
+        'jednou načtenou hodnotu do proměnné).\n\n'
+        'Minimální funkční příklad (fetch, žádná knihovna navíc):\n\n'
+        '```js\n'
+        'function getCookie(name) {\n'
+        '  return document.cookie.match(new RegExp(`(^| )${name}=([^;]+)`))?.[2];\n'
+        '}\n\n'
+        'await fetch(`${API}/admin/auth/csrf`, { credentials: \'include\' });\n\n'
+        'const res = await fetch(`${API}/admin/auth/login`, {\n'
+        '  method: \'POST\',\n'
+        '  credentials: \'include\',\n'
+        '  headers: {\n'
+        '    \'Content-Type\': \'application/json\',\n'
+        '    \'X-CSRFToken\': getCookie(\'csrftoken\'),\n'
+        '  },\n'
+        '  body: JSON.stringify({ email, password }),\n'
+        '});\n'
+        '```\n\n'
+        'Odhlášení: `POST /admin/auth/logout` (stejná pravidla - `credentials: '
+        'include` + `X-CSRFToken`).\n\n'
+        '**Veřejné endpointy** (bez `/admin/` prefixu - katalog, košík, '
+        '`POST /orders`...) nic z tohoto nepotřebují, žádné přihlášení ani '
+        'CSRF header.\n\n'
+        '**Proč cookie a ne Bearer token:** `sessionid` je httpOnly, takže ji '
+        'žádný injektovaný skript (XSS) nemůže přečíst ani ukrást - u '
+        'administrace, která řeší peníze a objednávky, je to bezpečnější než '
+        'token v `localStorage`, který by přečetl kdokoliv s přístupem k JS '
+        'kontextu stránky.'
+    ),
     'VERSION': 'v1',
     'SERVE_INCLUDE_SCHEMA': False,
     'SCHEMA_PATH_PREFIX': '/api/v1/',
@@ -140,6 +211,15 @@ SPECTACULAR_SETTINGS = {
         'DeliveryTypeEnum': 'orders.models.DeliveryType',
         'ShippingPriceDeliveryTypeEnum': 'shipping.models.SHIPPING_PRICE_DELIVERY_TYPE_CHOICES',
     },
+    # drf-spectacular auto-advertises SessionAuthentication as a cookieAuth
+    # "Authorize" padlock, but it's non-functional: sessionid is httpOnly
+    # (can't be typed in there) and drf-spectacular's own injectAuthCredentials
+    # JS only wires up apiKey-in-header/bearer/basic, never apiKey-in-cookie -
+    # filling the dialog in does nothing either way. Empty whitelist = don't
+    # advertise any authenticator as a security scheme (the only one we have
+    # is this unusable one) - real auth still works identically, this only
+    # removes a dead-end UI affordance.
+    'AUTHENTICATION_WHITELIST': [],
 }
 
 MIDDLEWARE = [
@@ -174,6 +254,19 @@ SESSION_COOKIE_SAMESITE = os.environ.get('COOKIE_SAMESITE', 'Lax')
 CSRF_COOKIE_SAMESITE = os.environ.get('COOKIE_SAMESITE', 'Lax')
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
+
+# Behind nginx terminating TLS (see deploy/nginx.conf.example), Django itself
+# only ever sees a plain HTTP connection from the proxy - without this,
+# request.is_secure() is always False, which silently defeats
+# SESSION_COOKIE_SECURE/CSRF_COOKIE_SECURE above (the cookie Secure flag
+# would never be set) even though the browser-facing connection really is
+# HTTPS. Safe only because nginx.conf.example always overwrites
+# X-Forwarded-Proto itself - never forwards a client-supplied one.
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = True
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 
 # Shop configuration without its own DB table (GET /config, confirmation
 # e-mails) - all values come from env, see .env.example.

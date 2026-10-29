@@ -638,10 +638,19 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         description=(
             '`shipmentStatus` a nepovinně `trackingNumber` najednou - typicky '
             'při vytištění štítku nebo předání dopravci, bez nutnosti měnit '
-            'hlavní `status` objednávky.'
+            'hlavní `status` objednávky.\n\n'
+            '`shipmentStatus` jde jen **dopředu** (`CREATED → LABEL_PRINTED → '
+            'HANDED_OVER → IN_TRANSIT → DELIVERED`); `RETURNED` jen od '
+            '`HANDED_OVER` a dál. Mění se jen u objednávky, která je už ve '
+            'výrobě nebo dál (`PROCESSING`/`SHIPPED`/`DELIVERED`) - jiná '
+            'kombinace 409. `trackingNumber` lze opravit kdykoli, nezávisle '
+            'na tomhle omezení.'
         ),
         request=AdminShipmentStatusSerializer,
-        responses={200: AdminOrderDetailSerializer},
+        responses={
+            200: AdminOrderDetailSerializer,
+            409: OpenApiResponse(description='INVALID_STATUS_TRANSITION - přechod není povolen nebo objednávka ještě není ve výrobě.'),
+        },
     )
     @action(detail=True, methods=['patch'], url_path='shipment-status')
     def shipment_status(self, request, pk=None):
@@ -651,10 +660,16 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         value = serializer.validated_data['shipment_status']
         if value not in ShipmentStatus.values:
             raise serializers.ValidationError({'shipment_status': _('Unknown shipment status.')})
-        order.shipment_status = value
+
+        # trackingNumber may be corrected any time, independent of the
+        # shipmentStatus gate below - saved first and separately so a
+        # rejected status transition never rolls back a valid correction.
         if 'tracking_number' in serializer.validated_data:
             order.tracking_number = serializer.validated_data['tracking_number']
-        order.save()
+            order.save(update_fields=['tracking_number', 'updated_at'])
+
+        services.transition_shipment_status(order, value)
+        order.refresh_from_db()
         return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
 
     @extend_schema(

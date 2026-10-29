@@ -257,3 +257,93 @@ def test_payment_status_endpoint_rejects_invalid_transition(staff_client, motif,
     response = staff_client.patch(f'/api/v1/admin/orders/{order.id}/payment-status', {'paymentStatus': 'REFUNDED'}, format='json')
 
     assert response.status_code == 409
+
+
+def test_shipment_status_endpoint_rejects_change_before_production(staff_client, motif, product_type, cut, color, packeta_carrier):
+    # Default _order() status is NEW - production hasn't started, so there's
+    # nothing to ship yet.
+    order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
+
+    response = staff_client.patch(
+        f'/api/v1/admin/orders/{order.id}/shipment-status', {'shipmentStatus': 'DELIVERED'}, format='json',
+    )
+
+    assert response.status_code == 409
+    assert response.data['error']['code'] == 'INVALID_STATUS_TRANSITION'
+    order.refresh_from_db()
+    assert order.shipment_status == ShipmentStatus.CREATED
+
+
+def test_shipment_status_endpoint_allows_forward_move_in_production(staff_client, motif, product_type, cut, color, packeta_carrier):
+    order = _order(
+        motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
+        status=OrderStatus.PROCESSING, shipment_status=ShipmentStatus.LABEL_PRINTED,
+    )
+
+    response = staff_client.patch(
+        f'/api/v1/admin/orders/{order.id}/shipment-status', {'shipmentStatus': 'HANDED_OVER'}, format='json',
+    )
+
+    assert response.status_code == 200
+    assert response.data['shipment_status'] == ShipmentStatus.HANDED_OVER
+    order.refresh_from_db()
+    assert order.shipment_status == ShipmentStatus.HANDED_OVER
+
+
+def test_shipment_status_endpoint_rejects_backward_move(staff_client, motif, product_type, cut, color, packeta_carrier):
+    order = _order(
+        motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
+        status=OrderStatus.SHIPPED, shipment_status=ShipmentStatus.IN_TRANSIT,
+    )
+
+    response = staff_client.patch(
+        f'/api/v1/admin/orders/{order.id}/shipment-status', {'shipmentStatus': 'LABEL_PRINTED'}, format='json',
+    )
+
+    assert response.status_code == 409
+    order.refresh_from_db()
+    assert order.shipment_status == ShipmentStatus.IN_TRANSIT
+
+
+def test_shipment_status_endpoint_rejects_returned_before_handover(staff_client, motif, product_type, cut, color, packeta_carrier):
+    order = _order(
+        motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
+        status=OrderStatus.PROCESSING, shipment_status=ShipmentStatus.LABEL_PRINTED,
+    )
+
+    response = staff_client.patch(
+        f'/api/v1/admin/orders/{order.id}/shipment-status', {'shipmentStatus': 'RETURNED'}, format='json',
+    )
+
+    assert response.status_code == 409
+
+
+def test_shipment_status_endpoint_allows_returned_after_handover(staff_client, motif, product_type, cut, color, packeta_carrier):
+    order = _order(
+        motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
+        status=OrderStatus.SHIPPED, shipment_status=ShipmentStatus.IN_TRANSIT,
+    )
+
+    response = staff_client.patch(
+        f'/api/v1/admin/orders/{order.id}/shipment-status', {'shipmentStatus': 'RETURNED'}, format='json',
+    )
+
+    assert response.status_code == 200
+    order.refresh_from_db()
+    assert order.shipment_status == ShipmentStatus.RETURNED
+
+
+def test_shipment_status_endpoint_can_correct_tracking_number_before_production(staff_client, motif, product_type, cut, color, packeta_carrier):
+    # trackingNumber may be fixed any time, independent of the shipment
+    # status gate above (e.g. a typo noticed before the order even ships).
+    order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
+
+    response = staff_client.patch(
+        f'/api/v1/admin/orders/{order.id}/shipment-status',
+        {'shipmentStatus': 'CREATED', 'trackingNumber': 'Z 999'},
+        format='json',
+    )
+
+    assert response.status_code == 409  # CREATED -> CREATED is not "forward"
+    order.refresh_from_db()
+    assert order.tracking_number == 'Z 999'  # but the correction still landed

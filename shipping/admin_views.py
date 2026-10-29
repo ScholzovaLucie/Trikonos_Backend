@@ -153,7 +153,8 @@ class AdminPacketaConfigView(viewsets.ViewSet):
         '`discountPercent` 0-100 (`100` = doprava od tohoto počtu kusů '
         'zdarma) se odečítá ze základní ceny té kombinace. Platí práh s '
         'nejvyšším `minQuantity`, který objednávka splňuje; bez shody platí '
-        'plná cena.'
+        'plná cena. Duplicitní `minQuantity` v rámci jedné `shippingPriceId` '
+        'vrátí 409 (jinak by nebylo jednoznačné, který práh platí).'
     ),
     tag='Admin - doprava',
 )

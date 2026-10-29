@@ -2,7 +2,7 @@ import pytest
 from rest_framework.exceptions import PermissionDenied
 
 from catalog.models import PrintArea, ProductType
-from core.exceptions import BusinessError, InvalidStatusTransitionError, OrderLockedError
+from core.exceptions import BusinessError, InvalidStatusTransitionError, OrderLockedError, ShippingPriceNotConfigured
 from customers.models import Customer
 from orders import services
 from orders.models import DeliveryType, Order, OrderStatus, PaymentMethod, PaymentStatus
@@ -257,15 +257,18 @@ def test_cash_on_delivery_paid_transition_redirects_without_marking_paid(motif, 
     assert order.payment_status == PaymentStatus.PENDING
 
 
-def test_cash_on_delivery_marks_paid_only_on_delivery(motif, product_type, cut, color, carrier):
+def test_cash_on_delivery_marks_paid_only_on_delivery(motif, product_type, cut, color):
     """The carrier collects the cash at the doorstep - payment_status only
-    becomes PAID once the order actually reaches DELIVERED.
+    becomes PAID once the order actually reaches DELIVERED. Uses personal
+    pickup (always free, no price row needed) since this test only cares
+    about the payment-status side effect of reaching SHIPPED/DELIVERED, not
+    shipping cost.
     """
     items = [{
         'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
         'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
     }]
-    order = _make_order(items, payment_method=PaymentMethod.CASH_ON_DELIVERY, delivery_data=_home_delivery(carrier))
+    order = _make_order(items, payment_method=PaymentMethod.CASH_ON_DELIVERY, delivery_data=_personal_pickup())
     services.set_shipping_cost(order, 0)
     order.refresh_from_db()
 
@@ -281,17 +284,18 @@ def test_cash_on_delivery_marks_paid_only_on_delivery(motif, product_type, cut, 
     assert order.payment_status == PaymentStatus.PAID
 
 
-def test_bank_transfer_delivery_does_not_auto_mark_paid(motif, product_type, cut, color, carrier):
+def test_bank_transfer_delivery_does_not_auto_mark_paid(motif, product_type, cut, color):
     """The COD auto-paid-on-delivery rule is COD-specific - a bank transfer
     order reaching DELIVERED must not be silently marked paid just because
     it was delivered (bank transfer payment confirmation is a separate,
-    explicit step).
+    explicit step). Uses personal pickup for the same reason as the COD
+    test above - delivery/shipping cost specifics aren't what's tested here.
     """
     items = [{
         'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
         'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
     }]
-    order = _make_order(items, payment_method=PaymentMethod.BANK_TRANSFER, delivery_data=_home_delivery(carrier))
+    order = _make_order(items, payment_method=PaymentMethod.BANK_TRANSFER, delivery_data=_personal_pickup())
     services.set_shipping_cost(order, 0)
     order.refresh_from_db()
 
@@ -369,16 +373,22 @@ def _personal_pickup():
     return {'carrier': None, 'delivery_type': DeliveryType.PERSONAL_PICKUP, 'pickup_point_id': '', 'pickup_point_name': ''}
 
 
-def test_shipping_cost_stays_null_without_a_configured_price_for_the_pair(motif, product_type, cut, color, carrier):
+def test_order_creation_fails_without_a_configured_price_for_the_chosen_pair(motif, product_type, cut, color, carrier):
+    """A real order must never silently persist without a shipping cost -
+    an admin forgetting to configure a price for a carrier/delivery pair is
+    a configuration error (503), not a business outcome. Contrast with
+    POST /cart/validate, which still reports this as shippingCost: null
+    since no carrier/delivery may have been chosen yet there.
+    """
     items = [{
         'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
         'cut': cut, 'color': color, 'size': 'M', 'quantity': 2, 'placements': [],
     }]
 
-    order = _make_order(items, delivery_data=_home_delivery(carrier))
+    with pytest.raises(ShippingPriceNotConfigured):
+        _make_order(items, delivery_data=_home_delivery(carrier))
 
-    assert order.shipping_cost is None
-    assert order.total is None
+    assert Order.objects.count() == 0
 
 
 def test_automatic_shipping_cost_uses_price_for_the_carrier_and_delivery_type(motif, product_type, cut, color, carrier):

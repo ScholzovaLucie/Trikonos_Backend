@@ -192,6 +192,7 @@ class PasswordResetRequestView(APIView):
 class PasswordResetConfirmView(APIView):
     """Dokončení resetu hesla - nastaví nové heslo podle odkazu z e-mailu."""
     permission_classes = [AllowAny]
+    throttle_scope = 'login'
 
     @extend_schema(
         tags=_TAG,
@@ -202,10 +203,14 @@ class PasswordResetConfirmView(APIView):
             'přečte a poslal v těle požadavku). Neplatný nebo prošlý token vrací 400 '
             's obecnou zprávou "Odkaz pro nastavení hesla je neplatný nebo prošlý." - '
             'frontend by v tom případě měl nabídnout znovu vyžádat reset. Nové heslo '
-            'podléhá stejným Django validátorům jako `POST /auth/password`.'
+            'podléhá stejným Django validátorům jako `POST /auth/password`. Limit '
+            '5 požadavků/min na IP (`ScopedRateThrottle`), stejně jako u přihlášení.'
         ),
         request=PasswordResetConfirmSerializer,
-        responses={204: OpenApiResponse(description='Heslo nastaveno, uživatel se může přihlásit.')},
+        responses={
+            204: OpenApiResponse(description='Heslo nastaveno, uživatel se může přihlásit.'),
+            429: OpenApiResponse(description='Překročen limit požadavků.'),
+        },
     )
     def post(self, request):
         serializer = PasswordResetConfirmSerializer(data=request.data)

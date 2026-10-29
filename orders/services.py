@@ -2,6 +2,7 @@
 every price, label, status transition and validation rule lives here, per
 the API guide's "server never trusts the frontend" rule.
 """
+import logging
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -11,7 +12,13 @@ from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy
 from rest_framework import exceptions as drf_exceptions
 
-from core.exceptions import BusinessError, InvalidStatusTransitionError, OrderLockedError, ShipmentAlreadyCreatedError
+from core.exceptions import (
+    BusinessError,
+    InvalidStatusTransitionError,
+    OrderLockedError,
+    ShipmentAlreadyCreatedError,
+    ShippingPriceNotConfigured,
+)
 
 from .models import (
     CustomDesignPlacement,
@@ -23,6 +30,8 @@ from .models import (
     PaymentStatus,
     ShipmentStatus,
 )
+
+logger = logging.getLogger(__name__)
 
 MAX_ITEM_QUANTITY = 500
 EDITABLE_STATUSES = {OrderStatus.QUOTE_REQUESTED, OrderStatus.NEW}
@@ -238,11 +247,16 @@ def _apply_automatic_shipping_cost(order, *, total_quantity):
     even to a QUOTE_REQUESTED order where some items still await admin
     pricing. No-op once admin has set shipping_cost by hand
     (shipping_cost_manual) - see set_shipping_cost/reset_shipping_cost.
-    Leaves shipping_cost NULL if admin hasn't configured a price for this
-    pair yet, same as before this feature existed. An admin-supplied
-    shippingCost on manual order creation is applied by the caller
-    (OrderCreateSerializer.create) right after order creation and
-    overrides whatever this sets.
+    An admin-supplied shippingCost on manual order creation is applied by
+    the caller (OrderCreateSerializer.create) right after order creation
+    and overrides whatever this sets.
+
+    Raises ShippingPriceNotConfigured (503) if a carrier/delivery_type was
+    actually chosen but admin never set a price for that pair - a real
+    order must never silently persist without a shipping cost, see API
+    guide chapter 3. If no carrier is set yet (delivery not chosen, e.g. an
+    admin-drafted phone order), that's not a config error - shipping_cost
+    is simply left NULL until delivery is decided.
     """
     if order.shipping_cost_manual:
         return
@@ -253,10 +267,18 @@ def _apply_automatic_shipping_cost(order, *, total_quantity):
         carrier=order.carrier, delivery_type=order.delivery_type,
         payment_method=order.payment_method, total_quantity=total_quantity,
     )
-    if cost is not None:
-        order.shipping_cost = cost
-        order.save(update_fields=['shipping_cost', 'updated_at'])
-        recalculate_totals(order)
+    if cost is None:
+        if order.carrier_id is not None:
+            logger.error(
+                'Shipping price not configured for carrier_id=%s delivery_type=%s (order %s)',
+                order.carrier_id, order.delivery_type, order.order_number,
+            )
+            raise ShippingPriceNotConfigured()
+        return
+
+    order.shipping_cost = cost
+    order.save(update_fields=['shipping_cost', 'updated_at'])
+    recalculate_totals(order)
 
 
 # ---------------------------------------------------------------------------
@@ -567,6 +589,37 @@ def transition_payment_status(order, target_status, *, is_admin):
 
     order.payment_status = target_status
     order.save(update_fields=['payment_status', 'updated_at'])
+    return order
+
+
+# ---------------------------------------------------------------------------
+# Shipment status - forward-only (chapter 6 of the API guide), and only
+# once the order is actually being produced/shipped - a brand new or
+# not-yet-confirmed order has nothing to ship yet. No role restriction:
+# unlike payment status, marking a shipment handed over/delivered has no
+# money consequences, so any STAFF member handles it day to day.
+# ---------------------------------------------------------------------------
+
+_SHIPMENT_STATUS_EDITABLE_ORDER_STATUSES = {OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED}
+
+
+def transition_shipment_status(order, target_status):
+    if order.status not in _SHIPMENT_STATUS_EDITABLE_ORDER_STATUSES:
+        raise InvalidStatusTransitionError(
+            _('Shipment status can only change once the order is in production or later.'),
+        )
+
+    current_rank = _shipment_status_rank(order.shipment_status)
+    if target_status == ShipmentStatus.RETURNED:
+        if current_rank < _shipment_status_rank(ShipmentStatus.HANDED_OVER):
+            raise InvalidStatusTransitionError(
+                _('A shipment can only be marked returned once it has been handed to the carrier.'),
+            )
+    elif _shipment_status_rank(target_status) <= current_rank:
+        raise InvalidStatusTransitionError(_('Shipment status can only move forward.'))
+
+    order.shipment_status = target_status
+    order.save(update_fields=['shipment_status', 'updated_at'])
     return order
 
 

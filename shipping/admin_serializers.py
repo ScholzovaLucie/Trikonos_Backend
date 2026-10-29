@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from core.exceptions import DuplicateQuantityDiscountError
+
 from .models import (
     SHIPPING_PRICE_DELIVERY_TYPE_CHOICES,
     Carrier,
@@ -50,8 +52,23 @@ class AdminShippingQuantityDiscountSerializer(serializers.ModelSerializer):
     class Meta:
         model = ShippingQuantityDiscount
         fields = ['id', 'shipping_price_id', 'min_quantity', 'discount_percent', 'position', 'is_active']
+        # Disables DRF's auto-generated UniqueTogetherValidator (which would
+        # report this as a generic 400) in favour of the 409 raised in
+        # validate() below - a duplicate threshold is a conflict with
+        # existing admin data, not a malformed request.
+        validators = []
 
     def validate_discount_percent(self, value):
         if not (0 <= value <= 100):
             raise serializers.ValidationError('discount_percent must be between 0 and 100.')
         return value
+
+    def validate(self, attrs):
+        shipping_price = attrs.get('shipping_price', getattr(self.instance, 'shipping_price', None))
+        min_quantity = attrs.get('min_quantity', getattr(self.instance, 'min_quantity', None))
+        duplicate = ShippingQuantityDiscount.objects.filter(shipping_price=shipping_price, min_quantity=min_quantity)
+        if self.instance is not None:
+            duplicate = duplicate.exclude(pk=self.instance.pk)
+        if duplicate.exists():
+            raise DuplicateQuantityDiscountError()
+        return attrs

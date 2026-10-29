@@ -81,6 +81,18 @@ class ShipmentAlreadyCreatedError(BusinessError):
     default_detail = _('A shipment was already created for this order.')
 
 
+class ShippingPriceNotConfigured(BusinessError):
+    status_code = 503
+    default_code = 'SHIPPING_PRICE_NOT_CONFIGURED'
+    default_detail = _('Shipping price is not configured for the selected carrier and delivery type.')
+
+
+class DuplicateQuantityDiscountError(BusinessError):
+    status_code = 409
+    default_code = 'DUPLICATE_QUANTITY_DISCOUNT'
+    default_detail = _('A quantity discount with this minimum quantity already exists for this shipping price.')
+
+
 # Fallback mapping for DRF/Django exceptions that don't carry our own `.code`
 # attribute, checked via isinstance (ordered dict - first match wins).
 _CODE_BY_EXCEPTION_TYPE = {

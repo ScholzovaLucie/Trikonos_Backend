@@ -24,6 +24,15 @@ Backend je REST API pro katalog motivů a variant oblečení, konfiguraci vlastn
 - Média: backend má `MEDIA_URL=/media/`; dostupnost konkrétních souborů závisí na konfiguraci URL a oprávnění.
 - Adresa `FRONTEND_URL` je konfigurace backendu pro odkazy v e-mailech; **není to automaticky adresa API**.
 
+### Produkční nasazení
+
+Lokální `docker-compose.yml` (Django dev server, `/media/` servírované jen v `DEBUG=True`) je určený pro vývoj, ne produkci. V produkci:
+
+- `DJANGO_DEBUG=False` (výchozí, pokud proměnná chybí - viz `settings/settings.py`) a `DJANGO_SECRET_KEY` nastavený na skutečnou tajnou hodnotu.
+- Django app server přes `gunicorn settings.wsgi:application`, ne `manage.py runserver`.
+- Nginx (nebo jiný reverse proxy) před Djangem - terminuje TLS, servíruje `/media/` přímo ze sdíleného volume (bez dotazu na Django) a vše ostatní proxuje na app server. Ukázková konfigurace: [`deploy/nginx.conf.example`](deploy/nginx.conf.example). Proxy musí vždy **přepsat** `X-Forwarded-Proto` vlastní hodnotou (nikdy nepřeposílat tu od klienta) - na tom spoléhá `SECURE_PROXY_SSL_HEADER` v nastavení.
+- `FRONTEND_ORIGINS`/`CSRF_TRUSTED_ORIGINS`, `COOKIE_SAMESITE` a `DJANGO_ALLOWED_HOSTS` nastavené na skutečné produkční domény (viz `.env.example`).
+
 ## 2. Pravidla komunikace
 
 - JSON klíče API jsou v **camelCase** (interní Django modely mohou používat snake_case).

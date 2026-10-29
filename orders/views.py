@@ -283,7 +283,7 @@ class OrderLookupView(APIView):
     was wrong.
     """
     permission_classes = [AllowAny]
-    throttle_scope = 'public-write'
+    throttle_scope = 'order-lookup'
 
     @extend_schema(
         tags=['Checkout'],
@@ -297,7 +297,9 @@ class OrderLookupView(APIView):
             'e-mailu → **vždy stejná 404** - odpověď nikdy neprozradí, jestli '
             'bylo špatně číslo, e-mail, nebo objednávka neexistuje. E-mail se '
             'posílá v těle požadavku, nikdy v URL (aby nezůstal v historii '
-            'prohlížeče ani v logu serveru).'
+            'prohlížeče ani v logu serveru). Číslo objednávky je sekvenční, '
+            'takže limit je přísnější než u ostatních veřejných zápisů - '
+            '5 požadavků/min na IP.'
         ),
         request=OrderLookupRequestSerializer,
         responses={
