@@ -154,6 +154,30 @@ def test_inactive_motif_is_rejected(motif, product_type, cut, color):
         _make_order(items)
 
 
+def test_inactive_color_is_rejected(motif, product_type, cut, color):
+    color.is_active = False
+    color.save()
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+
+    with pytest.raises(BusinessError):
+        _make_order(items)
+
+
+def test_inactive_cut_is_rejected(motif, product_type, cut, color):
+    cut.is_active = False
+    cut.save()
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+
+    with pytest.raises(BusinessError):
+        _make_order(items)
+
+
 def test_existing_email_different_case_reuses_customer_without_disabling_consent(motif, product_type, cut, color):
     items = [{
         'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,

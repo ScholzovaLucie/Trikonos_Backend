@@ -5,7 +5,6 @@ from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from django.utils.translation import gettext as _
 from drf_spectacular.utils import OpenApiResponse, extend_schema
-from rest_framework import exceptions as drf_exceptions
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -83,8 +82,17 @@ class LoginView(APIView):
             password=serializer.validated_data['password'],
         )
         if user is None or not user.is_active:
+            # Returned directly (not raised) to keep this a real 401: DRF's
+            # APIView.handle_exception() silently coerces a raised
+            # AuthenticationFailed/NotAuthenticated into 403 whenever no
+            # authenticator supplies a WWW-Authenticate header - which
+            # SessionAuthentication never does. A bare raise here would
+            # contradict this endpoint's own documented 401 contract above.
             # Same message either way - never reveal which part was wrong.
-            raise drf_exceptions.AuthenticationFailed(_('Incorrect email or password.'))
+            return Response(
+                {'error': {'code': 'AUTHENTICATION_FAILED', 'message': str(_('Incorrect email or password.'))}},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
         login(request, user)
         return Response(MeSerializer(user).data)

@@ -267,7 +267,19 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
         motif.save(update_fields=['images', 'updated_at'])
         return Response(AdminMotifDetailSerializer(motif).data)
 
+    # PATCH and DELETE share one @action/one url_path on purpose: DRF's
+    # router sorts extra actions alphabetically by method name, not by
+    # definition order, so two separate @action-decorated methods with the
+    # identical url_path regex (as this used to be - update_image/
+    # delete_image) register as two distinct, non-merged URL patterns.
+    # Django's resolver commits to whichever one happens to sort first and
+    # never falls through to the other on a method mismatch - so the
+    # loser's HTTP method was dead on arrival (always 405), silently,
+    # since there was no test coverage. One action with methods=['patch',
+    # 'delete'] is the only way two methods on the same dynamic path are
+    # both actually reachable.
     @extend_schema(
+        methods=['PATCH'],
         tags=_TAG,
         summary='Upravit popisek/barvu fotky',
         description=(
@@ -280,8 +292,33 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
         parameters=[OpenApiParameter('image_id', str, OpenApiParameter.PATH, description='UUID obrázku uvnitř pole images.')],
         responses={200: AdminMotifDetailSerializer},
     )
-    @action(detail=True, methods=['patch'], url_path=r'images/(?P<image_id>[^/.]+)')
-    def update_image(self, request, pk=None, image_id=None):
+    @extend_schema(
+        methods=['DELETE'],
+        tags=_TAG,
+        summary='Smazat fotku motivu',
+        description=(
+            'Odebere obrázek z pole `images` podle jeho `id` a smaže i jeho '
+            'soubory z úložiště (originál i obě miniatury) - není to jen smazání '
+            'záznamu, soubor opravdu zmizí.'
+        ),
+        parameters=[OpenApiParameter('image_id', str, OpenApiParameter.PATH, description='UUID obrázku uvnitř pole images.')],
+        responses={204: OpenApiResponse(description='Obrázek a jeho soubory smazány.')},
+    )
+    # image_id is constrained to an actual UUID shape (not the generic
+    # [^/.]+ it used to be) so this pattern never swallows the literal
+    # "images/reorder" path below - that match is purely path-regex based,
+    # independent of HTTP method, so a loose wildcard here would shadow
+    # reorder_images again regardless of which action sorts first.
+    @action(
+        detail=True, methods=['patch', 'delete'],
+        url_path=r'images/(?P<image_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})',
+    )
+    def image_detail(self, request, pk=None, image_id=None):
+        if request.method == 'DELETE':
+            return self._delete_image(request, image_id)
+        return self._update_image(request, image_id)
+
+    def _update_image(self, request, image_id):
         motif = self.get_object()
         serializer = MotifImagePatchSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -302,19 +339,7 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
         motif.save(update_fields=['images', 'updated_at'])
         return Response(AdminMotifDetailSerializer(motif).data)
 
-    @extend_schema(
-        tags=_TAG,
-        summary='Smazat fotku motivu',
-        description=(
-            'Odebere obrázek z pole `images` podle jeho `id` a smaže i jeho '
-            'soubory z úložiště (originál i obě miniatury) - není to jen smazání '
-            'záznamu, soubor opravdu zmizí.'
-        ),
-        parameters=[OpenApiParameter('image_id', str, OpenApiParameter.PATH, description='UUID obrázku uvnitř pole images.')],
-        responses={204: OpenApiResponse(description='Obrázek a jeho soubory smazány.')},
-    )
-    @action(detail=True, methods=['delete'], url_path=r'images/(?P<image_id>[^/.]+)')
-    def delete_image(self, request, pk=None, image_id=None):
+    def _delete_image(self, request, image_id):
         motif = self.get_object()
         images = list(motif.images or [])
         target = next((img for img in images if img['id'] == image_id), None)
