@@ -1,5 +1,4 @@
 import pytest
-from rest_framework.exceptions import PermissionDenied
 
 from catalog.models import PrintArea, ProductType
 from core.exceptions import BusinessError, InvalidStatusTransitionError, OrderLockedError, ShippingPriceNotConfigured
@@ -73,9 +72,9 @@ def test_catalog_item_uses_server_price_and_sets_new_status(motif, product_type,
     assert order.status == OrderStatus.NEW
     item = order.items.get()
     # Server price wins regardless of whatever a client might have sent.
-    assert item.unit_price == motif.price
+    assert item.unit_price == motif.price + product_type.price
     assert item.item_label == f'Bitcoin / {product_type.name} / {cut.name} / {color.name} / M'
-    assert order.subtotal == motif.price * 2
+    assert order.subtotal == (motif.price + product_type.price) * 2
     assert order.total is None  # shipping_cost not set yet
 
 
@@ -223,7 +222,7 @@ def test_pricing_and_shipping_completes_total_and_confirm_advances_status(produc
     assert order.status == OrderStatus.NEW
     assert order.confirmed_at is not None
 
-    services.transition_order_status(order, OrderStatus.PROCESSING, is_admin=False)
+    services.transition_order_status(order, OrderStatus.PROCESSING)
     order.refresh_from_db()
     assert order.status == OrderStatus.PROCESSING
 
@@ -237,10 +236,10 @@ def test_invalid_status_transition_is_rejected(motif, product_type, cut, color):
     assert order.status == OrderStatus.NEW
 
     with pytest.raises(InvalidStatusTransitionError):
-        services.transition_order_status(order, OrderStatus.DELIVERED, is_admin=True)
+        services.transition_order_status(order, OrderStatus.DELIVERED)
 
 
-def test_staff_cannot_refund_only_admin_can(motif, product_type, cut, color):
+def test_refund_transitions_order_to_refunded(motif, product_type, cut, color):
     items = [{
         'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
         'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
@@ -248,13 +247,10 @@ def test_staff_cannot_refund_only_admin_can(motif, product_type, cut, color):
     order = _make_order(items)
     services.set_shipping_cost(order, 0)
     order.refresh_from_db()
-    services.transition_order_status(order, OrderStatus.PAID, is_admin=False)
+    services.transition_order_status(order, OrderStatus.PAID)
     order.refresh_from_db()
 
-    with pytest.raises(PermissionDenied):
-        services.transition_order_status(order, OrderStatus.REFUNDED, is_admin=False)
-
-    services.transition_order_status(order, OrderStatus.REFUNDED, is_admin=True)
+    services.transition_order_status(order, OrderStatus.REFUNDED)
     order.refresh_from_db()
     assert order.status == OrderStatus.REFUNDED
     assert order.payment_status == PaymentStatus.REFUNDED
@@ -274,7 +270,7 @@ def test_cash_on_delivery_paid_transition_redirects_without_marking_paid(motif, 
     services.set_shipping_cost(order, 0)
     order.refresh_from_db()
 
-    services.transition_order_status(order, OrderStatus.PAID, is_admin=False)
+    services.transition_order_status(order, OrderStatus.PAID)
     order.refresh_from_db()
 
     assert order.status == OrderStatus.PROCESSING
@@ -296,13 +292,13 @@ def test_cash_on_delivery_marks_paid_only_on_delivery(motif, product_type, cut, 
     services.set_shipping_cost(order, 0)
     order.refresh_from_db()
 
-    services.transition_order_status(order, OrderStatus.PAID, is_admin=False)  # -> PROCESSING
+    services.transition_order_status(order, OrderStatus.PAID)  # -> PROCESSING
     order.refresh_from_db()
-    services.transition_order_status(order, OrderStatus.SHIPPED, is_admin=False)
+    services.transition_order_status(order, OrderStatus.SHIPPED)
     order.refresh_from_db()
     assert order.payment_status == PaymentStatus.PENDING  # still not paid - not delivered yet
 
-    services.transition_order_status(order, OrderStatus.DELIVERED, is_admin=False)
+    services.transition_order_status(order, OrderStatus.DELIVERED)
     order.refresh_from_db()
     assert order.status == OrderStatus.DELIVERED
     assert order.payment_status == PaymentStatus.PAID
@@ -323,16 +319,16 @@ def test_bank_transfer_delivery_does_not_auto_mark_paid(motif, product_type, cut
     services.set_shipping_cost(order, 0)
     order.refresh_from_db()
 
-    services.transition_order_status(order, OrderStatus.PAID, is_admin=False)
+    services.transition_order_status(order, OrderStatus.PAID)
     order.refresh_from_db()
     assert order.status == OrderStatus.PAID
     assert order.payment_status == PaymentStatus.PAID  # unaffected by the resulting_status fix
 
-    services.transition_order_status(order, OrderStatus.PROCESSING, is_admin=False)
+    services.transition_order_status(order, OrderStatus.PROCESSING)
     order.refresh_from_db()
-    services.transition_order_status(order, OrderStatus.SHIPPED, is_admin=False)
+    services.transition_order_status(order, OrderStatus.SHIPPED)
     order.refresh_from_db()
-    services.transition_order_status(order, OrderStatus.DELIVERED, is_admin=False)
+    services.transition_order_status(order, OrderStatus.DELIVERED)
     order.refresh_from_db()
     assert order.status == OrderStatus.DELIVERED
     assert order.payment_status == PaymentStatus.PAID  # already was, not re-derived from delivery
@@ -346,7 +342,7 @@ def test_editing_price_in_locked_state_raises_order_locked(motif, product_type, 
     order = _make_order(items)
     services.set_shipping_cost(order, 0)
     order.refresh_from_db()
-    services.transition_order_status(order, OrderStatus.PAID, is_admin=False)
+    services.transition_order_status(order, OrderStatus.PAID)
     order.refresh_from_db()
 
     item = order.items.get()
@@ -425,7 +421,7 @@ def test_automatic_shipping_cost_uses_price_for_the_carrier_and_delivery_type(mo
     order = _make_order(items, delivery_data=_home_delivery(carrier))
 
     assert order.shipping_cost == 5000
-    assert order.total == motif.price * 2 + 5000
+    assert order.total == (motif.price + product_type.price) * 2 + 5000
 
 
 def test_automatic_shipping_cost_applies_best_matching_quantity_discount(motif, product_type, cut, color, carrier):
@@ -497,7 +493,7 @@ def test_personal_pickup_is_always_free_without_any_configured_price(motif, prod
     order = _make_order(items, delivery_data=_personal_pickup())
 
     assert order.shipping_cost == 0
-    assert order.total == motif.price
+    assert order.total == motif.price + product_type.price
 
 
 # ---------------------------------------------------------------------------
@@ -590,7 +586,7 @@ def test_reset_shipping_cost_reverts_to_automatic(motif, product_type, cut, colo
 
     assert order.shipping_cost_manual is False
     assert order.shipping_cost == 5000
-    assert order.total == motif.price + 5000
+    assert order.total == motif.price + product_type.price + 5000
 
 
 def test_quantity_change_recalculates_automatic_shipping_cost(motif, product_type, cut, color, carrier):
@@ -613,7 +609,7 @@ def test_quantity_change_recalculates_automatic_shipping_cost(motif, product_typ
 
 # ---------------------------------------------------------------------------
 # Payment status transitions - independent of order status, but still
-# constrained to meaningful transitions and roles.
+# constrained to meaningful transitions.
 # ---------------------------------------------------------------------------
 
 def test_payment_status_valid_transition(motif, product_type, cut, color):
@@ -625,7 +621,7 @@ def test_payment_status_valid_transition(motif, product_type, cut, color):
     services.set_shipping_cost(order, 0)
     order.refresh_from_db()
 
-    services.transition_payment_status(order, PaymentStatus.PAID, is_admin=True)
+    services.transition_payment_status(order, PaymentStatus.PAID)
     order.refresh_from_db()
     assert order.payment_status == PaymentStatus.PAID
 
@@ -640,20 +636,7 @@ def test_payment_status_invalid_transition_rejected(motif, product_type, cut, co
     order.refresh_from_db()
 
     with pytest.raises(InvalidStatusTransitionError):
-        services.transition_payment_status(order, PaymentStatus.REFUNDED, is_admin=True)  # PENDING -> REFUNDED, no such edge
-
-
-def test_payment_status_paid_requires_admin(motif, product_type, cut, color):
-    items = [{
-        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
-        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
-    }]
-    order = _make_order(items)
-    services.set_shipping_cost(order, 0)
-    order.refresh_from_db()
-
-    with pytest.raises(PermissionDenied):
-        services.transition_payment_status(order, PaymentStatus.PAID, is_admin=False)
+        services.transition_payment_status(order, PaymentStatus.REFUNDED)  # PENDING -> REFUNDED, no such edge
 
 
 def test_payment_status_paid_requires_total_set(motif, product_type, cut, color, print_area):
@@ -667,7 +650,7 @@ def test_payment_status_paid_requires_total_set(motif, product_type, cut, color,
     order = _make_order(items)  # custom item, never priced -> total stays None
 
     with pytest.raises(BusinessError):
-        services.transition_payment_status(order, PaymentStatus.PAID, is_admin=True)
+        services.transition_payment_status(order, PaymentStatus.PAID)
 
 
 def test_payment_status_cannot_change_on_cancelled_order(motif, product_type, cut, color):
@@ -678,11 +661,11 @@ def test_payment_status_cannot_change_on_cancelled_order(motif, product_type, cu
     order = _make_order(items)
     services.set_shipping_cost(order, 0)
     order.refresh_from_db()
-    services.transition_order_status(order, OrderStatus.CANCELLED, is_admin=False)
+    services.transition_order_status(order, OrderStatus.CANCELLED)
     order.refresh_from_db()
 
     with pytest.raises(InvalidStatusTransitionError):
-        services.transition_payment_status(order, PaymentStatus.FAILED, is_admin=True)
+        services.transition_payment_status(order, PaymentStatus.FAILED)
 
 
 # ---------------------------------------------------------------------------
@@ -706,7 +689,7 @@ def test_quote_requested_to_new_blocked_via_generic_status_transition(product_ty
     assert order.status == OrderStatus.QUOTE_REQUESTED
 
     with pytest.raises(InvalidStatusTransitionError):
-        services.transition_order_status(order, OrderStatus.NEW, is_admin=True)
+        services.transition_order_status(order, OrderStatus.NEW)
 
     # /confirm is still the correct, working path for the same transition.
     services.confirm_order(order)

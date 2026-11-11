@@ -18,7 +18,6 @@ class MeSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     email = serializers.EmailField()
     name = serializers.CharField()
-    role = serializers.CharField()
 
 
 class ChangePasswordSerializer(serializers.Serializer):

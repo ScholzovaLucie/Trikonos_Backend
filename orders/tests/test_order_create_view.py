@@ -11,7 +11,7 @@ import uuid
 import pytest
 from rest_framework.test import APIClient
 
-from accounts.models import StaffRole, User
+from accounts.models import User
 from orders.models import DeliveryType, Order, OrderStatus
 from shipping.models import ShippingPrice
 
@@ -42,8 +42,8 @@ def _order_body(motif, product_type, cut, color, *, delivery, unit_price=None, s
 
 def test_public_checkout_ignores_client_supplied_unit_price(motif, product_type, cut, color):
     """A customer sending unitPrice: 1 (haléř) for a 599 Kč motif must still
-    be charged motif.price - the server never trusts a client-supplied item
-    price, public checkout or not.
+    be charged motif.price + product_type.price - the server never trusts a
+    client-supplied item price, public checkout or not.
     """
     client = APIClient()
     body = _order_body(
@@ -53,8 +53,8 @@ def test_public_checkout_ignores_client_supplied_unit_price(motif, product_type,
     response = client.post('/api/v1/orders', body, format='json')
 
     assert response.status_code == 201
-    assert response.data['items'][0]['unit_price'] == motif.price
-    assert response.data['subtotal'] == motif.price
+    assert response.data['items'][0]['unit_price'] == motif.price + product_type.price
+    assert response.data['subtotal'] == motif.price + product_type.price
 
 
 def test_public_checkout_ignores_client_supplied_shipping_cost(motif, product_type, cut, color, carrier):
@@ -76,7 +76,7 @@ def test_public_checkout_ignores_client_supplied_shipping_cost(motif, product_ty
 
     assert response.status_code == 201
     assert response.data['shipping_cost'] == 7900
-    assert response.data['total'] == motif.price + 7900
+    assert response.data['total'] == motif.price + product_type.price + 7900
 
 
 def test_public_checkout_custom_item_ignores_client_supplied_unit_price(product_type, cut, color, print_area):
@@ -124,7 +124,7 @@ def test_admin_create_can_set_unit_price_and_shipping_cost(motif, product_type, 
     is the one legitimate way to override price/shipping - confirms the
     distinction is real, not that admin override is silently broken too.
     """
-    admin = User.objects.create_user(email='admin@trikonos.cz', password='x', name='Admin', role=StaffRole.ADMIN)
+    admin = User.objects.create_user(email='admin@trikonos.cz', password='x', name='Admin')
     client = APIClient()
     client.force_authenticate(user=admin)
     body = _order_body(
@@ -194,7 +194,7 @@ def test_admin_created_catalog_order_does_not_auto_confirm(motif, product_type, 
     confirms it by hand later, even for a plain catalog item - the
     auto-confirm shortcut is specifically for the public checkout path.
     """
-    admin = User.objects.create_user(email='admin2@trikonos.cz', password='x', name='Admin', role=StaffRole.ADMIN)
+    admin = User.objects.create_user(email='admin2@trikonos.cz', password='x', name='Admin')
     client = APIClient()
     client.force_authenticate(user=admin)
     body = _order_body(motif, product_type, cut, color, delivery={'deliveryType': DeliveryType.PERSONAL_PICKUP})

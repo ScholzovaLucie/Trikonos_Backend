@@ -6,7 +6,7 @@ from django.utils.http import urlsafe_base64_encode
 import pytest
 from rest_framework.test import APIClient
 
-from .models import StaffRole, User
+from .models import User
 
 pytestmark = pytest.mark.django_db
 
@@ -25,25 +25,13 @@ def _isolate_throttle_cache():
 
 @pytest.fixture
 def admin_user():
-    return User.objects.create_user(email='admin@trikonos.cz', password='correct-horse', name='Admin', role=StaffRole.ADMIN)
-
-
-@pytest.fixture
-def staff_user():
-    return User.objects.create_user(email='staff@trikonos.cz', password='correct-horse', name='Staff', role=StaffRole.STAFF)
+    return User.objects.create_user(email='admin@trikonos.cz', password='correct-horse', name='Admin')
 
 
 @pytest.fixture
 def admin_client(admin_user):
     client = APIClient()
     client.force_authenticate(user=admin_user)
-    return client
-
-
-@pytest.fixture
-def staff_client(staff_user):
-    client = APIClient()
-    client.force_authenticate(user=staff_user)
     return client
 
 
@@ -57,7 +45,6 @@ def test_login_success_starts_session(admin_user):
 
     assert response.status_code == 200
     assert response.data['email'] == admin_user.email
-    assert response.data['role'] == StaffRole.ADMIN
 
 
 def test_login_wrong_password_and_wrong_email_return_the_same_error(admin_user):
@@ -208,9 +195,10 @@ def test_password_reset_confirm_with_unknown_uid_rejected():
 # Admin user management - last-admin / self-delete safeguards
 # ---------------------------------------------------------------------------
 
-def test_staff_cannot_access_admin_user_management(staff_client):
-    response = staff_client.get('/api/v1/admin/users')
-    assert response.status_code == 403
+def test_unauthenticated_cannot_access_admin_user_management():
+    client = APIClient()
+    response = client.get('/api/v1/admin/users')
+    assert response.status_code in (401, 403)
 
 
 def test_admin_cannot_delete_own_account(admin_client, admin_user):
@@ -219,10 +207,10 @@ def test_admin_cannot_delete_own_account(admin_client, admin_user):
     assert User.objects.filter(pk=admin_user.id).exists()
 
 
-def test_can_delete_an_admin_when_another_admin_remains(admin_user):
-    other_admin = User.objects.create_user(email='admin2@trikonos.cz', password='x', name='Admin 2', role=StaffRole.ADMIN)
+def test_can_delete_a_user_when_another_active_user_remains(admin_user):
+    other_user = User.objects.create_user(email='admin2@trikonos.cz', password='x', name='Admin 2')
     client = APIClient()
-    client.force_authenticate(user=other_admin)
+    client.force_authenticate(user=other_user)
 
     response = client.delete(f'/api/v1/admin/users/{admin_user.id}')
 
@@ -230,22 +218,7 @@ def test_can_delete_an_admin_when_another_admin_remains(admin_user):
     assert not User.objects.filter(pk=admin_user.id).exists()
 
 
-def test_cannot_delete_the_last_admin_even_via_a_different_active_admin_account(admin_client, admin_user, staff_user):
-    # Deleting a STAFF account is unaffected by the last-admin rule.
-    response = admin_client.delete(f'/api/v1/admin/users/{staff_user.id}')
-    assert response.status_code == 204
-
-
-def test_cannot_demote_the_last_active_admin(admin_client, admin_user):
-    response = admin_client.patch(f'/api/v1/admin/users/{admin_user.id}', {'role': 'STAFF'}, format='json')
-
-    assert response.status_code == 409
-    assert response.data['error']['code'] == 'LAST_ADMIN'
-    admin_user.refresh_from_db()
-    assert admin_user.role == StaffRole.ADMIN
-
-
-def test_cannot_deactivate_the_last_active_admin(admin_client, admin_user):
+def test_cannot_deactivate_the_last_active_user(admin_client, admin_user):
     response = admin_client.patch(f'/api/v1/admin/users/{admin_user.id}', {'isActive': False}, format='json')
 
     assert response.status_code == 409
@@ -254,21 +227,9 @@ def test_cannot_deactivate_the_last_active_admin(admin_client, admin_user):
     assert admin_user.is_active is True
 
 
-def test_can_demote_an_admin_when_another_admin_remains(admin_user):
-    other_admin = User.objects.create_user(email='admin2@trikonos.cz', password='x', name='Admin 2', role=StaffRole.ADMIN)
-    client = APIClient()
-    client.force_authenticate(user=other_admin)
-
-    response = client.patch(f'/api/v1/admin/users/{admin_user.id}', {'role': 'STAFF'}, format='json')
-
-    assert response.status_code == 200
-    admin_user.refresh_from_db()
-    assert admin_user.role == StaffRole.STAFF
-
-
 def test_create_user_without_password_sends_setup_email_with_unusable_password(admin_client):
     response = admin_client.post(
-        '/api/v1/admin/users', {'email': 'new@trikonos.cz', 'name': 'Nový', 'role': 'STAFF'}, format='json',
+        '/api/v1/admin/users', {'email': 'new@trikonos.cz', 'name': 'Nový'}, format='json',
     )
 
     assert response.status_code == 201
@@ -281,7 +242,7 @@ def test_create_user_without_password_sends_setup_email_with_unusable_password(a
 def test_create_user_with_password_does_not_send_email(admin_client):
     response = admin_client.post(
         '/api/v1/admin/users',
-        {'email': 'new2@trikonos.cz', 'name': 'Nový', 'role': 'STAFF', 'password': 'a-strong-enough-pass9'},
+        {'email': 'new2@trikonos.cz', 'name': 'Nový', 'password': 'a-strong-enough-pass9'},
         format='json',
     )
 
@@ -293,7 +254,7 @@ def test_create_user_with_password_does_not_send_email(admin_client):
 
 def test_create_user_with_duplicate_email_returns_409(admin_client, admin_user):
     response = admin_client.post(
-        '/api/v1/admin/users', {'email': admin_user.email, 'name': 'Duplicate', 'role': 'STAFF'}, format='json',
+        '/api/v1/admin/users', {'email': admin_user.email, 'name': 'Duplicate'}, format='json',
     )
 
     assert response.status_code == 409

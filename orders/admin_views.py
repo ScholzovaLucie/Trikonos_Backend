@@ -7,8 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import MethodNotAllowed, NotFound
 from rest_framework.response import Response
 
-from accounts.models import StaffRole
-from accounts.permissions import IsStaffOrAdmin
+from accounts.permissions import IsAdmin
 
 from . import services
 from .admin_serializers import (
@@ -69,8 +68,8 @@ _PLACEMENT_ID_PARAM = OpenApiParameter('placement_id', str, OpenApiParameter.PAT
             'poznámka, rozpad položek (motiv/typ/střih/barva/velikost/cena) a u '
             'vlastních položek `customText` + umístění s náhledem a názvem '
             'bloku. Navíc:\n'
-            '- `allowedTransitions` - do kterých stavů smí TENTO přihlášený '
-            'uživatel (podle role) objednávku právě teď posunout; prázdné '
+            '- `allowedTransitions` - do kterých stavů lze objednávku z jejího '
+            'aktuálního stavu právě teď posunout; prázdné '
             'pole = žádný přechod není momentálně možný.\n'
             '- `isLocked` - `true` mimo stavy QUOTE_REQUESTED/NEW, kdy nejde '
             'měnit ceny, dopravu ani adresy (`trackingNumber` lze měnit '
@@ -83,7 +82,7 @@ _PLACEMENT_ID_PARAM = OpenApiParameter('placement_id', str, OpenApiParameter.PAT
 )
 class AdminOrderViewSet(viewsets.ModelViewSet):
     """Objednávky - jádro administrace. Nikdy se nemažou, zrušení = status CANCELLED."""
-    permission_classes = [IsStaffOrAdmin]
+    permission_classes = [IsAdmin]
     http_method_names = ['get', 'post', 'patch', 'put', 'delete', 'head', 'options']
     filter_backends = []  # every filter below is bespoke (comma lists, camelCase params)
 
@@ -151,9 +150,6 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             context['is_admin'] = True
         return context
-
-    def _is_admin_role(self):
-        return self.request.user.role == StaffRole.ADMIN
 
     @extend_schema(
         tags=_TAG,
@@ -557,9 +553,7 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
             '`INVALID_STATUS_TRANSITION`. Některé přechody navíc vyžadují '
             'splněnou podmínku (např. NEW→PAID potřebuje stanovený `total`, '
             'PROCESSING→SHIPPED potřebuje vyplněného dopravce) - při nesplnění '
-            'také 409. Přechody na REFUNDED a zrušení objednávky už ve výrobě '
-            '(PROCESSING→CANCELLED) smí **jen role ADMIN** (STAFF dostane '
-            '403). Zjisti dopředu, co je právě povolené, z pole '
+            'také 409. Zjisti dopředu, co je právě povolené, z pole '
             '`allowedTransitions` v detailu objednávky. Speciální případ: '
             'cílový stav `PAID` u objednávky placené na dobírku se automaticky '
             'přesměruje na `PROCESSING` (dobírka nikdy neprochází stavem '
@@ -570,7 +564,6 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         request=AdminOrderStatusSerializer,
         responses={
             200: AdminOrderDetailSerializer,
-            403: OpenApiResponse(description='Tento přechod smí jen role ADMIN.'),
             409: OpenApiResponse(description='INVALID_STATUS_TRANSITION - přechod není povolen nebo podmínka nesplněna.'),
         },
     )
@@ -586,7 +579,7 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError({'status': _('Unknown order status.')})
 
         with transaction.atomic():
-            services.transition_order_status(order, target_status, is_admin=self._is_admin_role())
+            services.transition_order_status(order, target_status)
             if order.status == OrderStatus.SHIPPED:
                 transaction.on_commit(lambda: send_order_shipped_email(order))
             elif order.status == OrderStatus.CANCELLED:
@@ -606,16 +599,13 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
             'jsou to dvě oddělené akce.\n\n'
             'Povolené přechody: `PENDING→PAID`, `PENDING→FAILED`, '
             '`FAILED→PENDING`, `FAILED→PAID`, `PAID→REFUNDED` - jiná '
-            'kombinace 409. `PAID` a `REFUNDED` smí jen role ADMIN (STAFF '
-            '403) - ručně "zaplatit" nebo vrátit platbu je riziková akce. '
-            '`PAID` navíc vyžaduje stanovenou cenu (422 `ORDER_NOT_PRICED`). '
+            'kombinace 409. `PAID` navíc vyžaduje stanovenou cenu (422 `ORDER_NOT_PRICED`). '
             'U zrušené nebo vrácené objednávky (status CANCELLED/REFUNDED) '
             'nejde platební stav změnit vůbec (409).'
         ),
         request=AdminPaymentStatusSerializer,
         responses={
             200: AdminOrderDetailSerializer,
-            403: OpenApiResponse(description='PAID/REFUNDED smí jen role ADMIN.'),
             409: OpenApiResponse(description='Nepovolený přechod, nebo objednávka je CANCELLED/REFUNDED.'),
             422: OpenApiResponse(description='ORDER_NOT_PRICED - total je stále null.'),
         },
@@ -628,7 +618,7 @@ class AdminOrderViewSet(viewsets.ModelViewSet):
         value = serializer.validated_data['payment_status']
         if value not in PaymentStatus.values:
             raise serializers.ValidationError({'payment_status': _('Unknown payment status.')})
-        services.transition_payment_status(order, value, is_admin=self._is_admin_role())
+        services.transition_payment_status(order, value)
         order.refresh_from_db()
         return Response(AdminOrderDetailSerializer(order, context=self.get_serializer_context()).data)
 

@@ -1,23 +1,11 @@
 from rest_framework.permissions import BasePermission
 
-from .models import StaffRole
-
-
-class IsStaffOrAdmin(BasePermission):
-    """ADMIN and STAFF both pass - used on endpoints any admin-panel user
-    may call (orders, customers, dashboard, read-only lookups/motifs).
-    """
-
-    def has_permission(self, request, view):
-        user = request.user
-        return bool(user and user.is_authenticated and user.role in (StaffRole.ADMIN, StaffRole.STAFF))
-
 
 class IsAdmin(BasePermission):
-    """ADMIN only - lookup/motif writes, user management, REFUNDED and
-    in-production cancellation.
+    """Every backend account is an admin account - there is no second
+    (STAFF) tier. This just means "logged in to the admin panel".
     """
 
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and user.is_authenticated and user.role == StaffRole.ADMIN)
+        return bool(user and user.is_authenticated)

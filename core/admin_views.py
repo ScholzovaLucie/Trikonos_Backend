@@ -3,7 +3,7 @@ from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.permissions import IsStaffOrAdmin
+from accounts.permissions import IsAdmin
 from customers.models import Customer
 from orders.models import Order
 
@@ -12,7 +12,7 @@ from .admin_serializers import AdminSearchResponseSerializer
 
 class AdminSearchView(APIView):
     """Globální vyhledávání v administraci napříč objednávkami, zákazníky a motivy."""
-    permission_classes = [IsStaffOrAdmin]
+    permission_classes = [IsAdmin]
     LIMIT = 5
 
     @extend_schema(

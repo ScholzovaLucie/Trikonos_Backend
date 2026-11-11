@@ -3,7 +3,7 @@ from unittest.mock import patch
 import pytest
 from rest_framework.test import APIClient
 
-from accounts.models import StaffRole, User
+from accounts.models import User
 from core.exceptions import PacketaApiError
 from customers.models import Customer
 from orders.models import DeliveryType, Order, OrderStatus, PaymentMethod, PaymentStatus, ShipmentStatus
@@ -15,8 +15,8 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture
-def staff_client():
-    user = User.objects.create_user(email='staff@trikonos.cz', password='x', name='Staff', role=StaffRole.STAFF)
+def admin_client():
+    user = User.objects.create_user(email='admin@trikonos.cz', password='x', name='Admin')
     client = APIClient()
     client.force_authenticate(user=user)
     return client
@@ -52,7 +52,7 @@ def _order(*, motif, product_type, cut, color, packeta_carrier, delivery_type=De
     return order
 
 
-def test_create_shipment_pickup_point_success(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_create_shipment_pickup_point_success(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(
         motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
         delivery_type=DeliveryType.PICKUP_POINT,
@@ -60,7 +60,7 @@ def test_create_shipment_pickup_point_success(staff_client, motif, product_type,
     created = CreatedPacket(packet_id='12345', barcode='Z12345', barcode_text='Z 123 4567 890')
 
     with patch('shipping.packeta_client.create_packet', return_value=created) as mock_create:
-        response = staff_client.post(f'/api/v1/admin/orders/{order.id}/shipment', {'weight': '0.5'}, format='json')
+        response = admin_client.post(f'/api/v1/admin/orders/{order.id}/shipment', {'weight': '0.5'}, format='json')
 
     assert response.status_code == 200
     assert response.data['tracking_number'] == 'Z 123 4567 890'
@@ -74,7 +74,7 @@ def test_create_shipment_pickup_point_success(staff_client, motif, product_type,
     assert 'street' not in sent_attributes
 
 
-def test_create_shipment_home_delivery_success(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_create_shipment_home_delivery_success(admin_client, motif, product_type, cut, color, packeta_carrier):
     PacketaConfig.objects.update_or_create(pk=1, defaults={'home_delivery_address_id': '106'})
     order = _order(
         motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
@@ -83,7 +83,7 @@ def test_create_shipment_home_delivery_success(staff_client, motif, product_type
     created = CreatedPacket(packet_id='999', barcode='Z999', barcode_text='Z 999 0000 000')
 
     with patch('shipping.packeta_client.create_packet', return_value=created) as mock_create:
-        response = staff_client.post(f'/api/v1/admin/orders/{order.id}/shipment', {'weight': '1.2'}, format='json')
+        response = admin_client.post(f'/api/v1/admin/orders/{order.id}/shipment', {'weight': '1.2'}, format='json')
 
     assert response.status_code == 200
     sent_attributes = mock_create.call_args.kwargs['packet_attributes']
@@ -93,24 +93,24 @@ def test_create_shipment_home_delivery_success(staff_client, motif, product_type
     assert sent_attributes['city'] == 'Vrchlabí'
 
 
-def test_create_shipment_home_delivery_without_config_fails(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_create_shipment_home_delivery_without_config_fails(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(
         motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
         delivery_type=DeliveryType.HOME_DELIVERY, pickup_point_id='', pickup_point_name='',
     )
 
-    response = staff_client.post(f'/api/v1/admin/orders/{order.id}/shipment', {'weight': '1.0'}, format='json')
+    response = admin_client.post(f'/api/v1/admin/orders/{order.id}/shipment', {'weight': '1.0'}, format='json')
 
     assert response.status_code == 422
     order.refresh_from_db()
     assert order.carrier_shipment_id == ''
 
 
-def test_create_shipment_carrier_api_error_returns_502(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_create_shipment_carrier_api_error_returns_502(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
 
     with patch('shipping.packeta_client.create_packet', side_effect=PacketaApiError('Neplatné apiPassword.')):
-        response = staff_client.post(f'/api/v1/admin/orders/{order.id}/shipment', {'weight': '0.5'}, format='json')
+        response = admin_client.post(f'/api/v1/admin/orders/{order.id}/shipment', {'weight': '0.5'}, format='json')
 
     assert response.status_code == 502
     assert response.data['error']['code'] == 'CARRIER_API_ERROR'
@@ -118,28 +118,28 @@ def test_create_shipment_carrier_api_error_returns_502(staff_client, motif, prod
     assert order.carrier_shipment_id == ''
 
 
-def test_create_shipment_twice_fails(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_create_shipment_twice_fails(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(
         motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
         carrier_shipment_id='111', tracking_number='Z 111',
     )
 
-    response = staff_client.post(f'/api/v1/admin/orders/{order.id}/shipment', {'weight': '0.5'}, format='json')
+    response = admin_client.post(f'/api/v1/admin/orders/{order.id}/shipment', {'weight': '0.5'}, format='json')
 
     assert response.status_code == 409
     assert response.data['error']['code'] == 'SHIPMENT_ALREADY_CREATED'
 
 
-def test_shipment_label_without_shipment_fails(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_shipment_label_without_shipment_fails(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
 
-    response = staff_client.get(f'/api/v1/admin/orders/{order.id}/shipment/label')
+    response = admin_client.get(f'/api/v1/admin/orders/{order.id}/shipment/label')
 
     assert response.status_code == 422
     assert response.data['error']['code'] == 'SHIPMENT_NOT_CREATED'
 
 
-def test_shipment_label_success_bumps_shipment_status(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_shipment_label_success_bumps_shipment_status(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(
         motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
         carrier_shipment_id='111', tracking_number='Z 111',
@@ -147,7 +147,7 @@ def test_shipment_label_success_bumps_shipment_status(staff_client, motif, produ
     assert order.shipment_status == ShipmentStatus.CREATED
 
     with patch('shipping.packeta_client.get_label_pdf', return_value=b'%PDF-1.4 fake') as mock_label:
-        response = staff_client.get(f'/api/v1/admin/orders/{order.id}/shipment/label')
+        response = admin_client.get(f'/api/v1/admin/orders/{order.id}/shipment/label')
 
     assert response.status_code == 200
     assert response['Content-Type'] == 'application/pdf'
@@ -158,16 +158,16 @@ def test_shipment_label_success_bumps_shipment_status(staff_client, motif, produ
     assert order.shipment_status == ShipmentStatus.LABEL_PRINTED
 
 
-def test_shipment_tracking_without_shipment_fails(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_shipment_tracking_without_shipment_fails(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
 
-    response = staff_client.get(f'/api/v1/admin/orders/{order.id}/shipment/status')
+    response = admin_client.get(f'/api/v1/admin/orders/{order.id}/shipment/status')
 
     assert response.status_code == 422
     assert response.data['error']['code'] == 'SHIPMENT_NOT_CREATED'
 
 
-def test_shipment_tracking_advances_shipment_status(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_shipment_tracking_advances_shipment_status(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(
         motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
         carrier_shipment_id='111', tracking_number='Z 111', shipment_status=ShipmentStatus.LABEL_PRINTED,
@@ -175,7 +175,7 @@ def test_shipment_tracking_advances_shipment_status(staff_client, motif, product
     packeta_status = PacketStatus(status_code=4, code_text='departed', status_text='Packet is on the way.')
 
     with patch('shipping.packeta_client.get_packet_status', return_value=packeta_status) as mock_status:
-        response = staff_client.get(f'/api/v1/admin/orders/{order.id}/shipment/status')
+        response = admin_client.get(f'/api/v1/admin/orders/{order.id}/shipment/status')
 
     assert response.status_code == 200
     assert response.data['shipment_status'] == ShipmentStatus.IN_TRANSIT
@@ -184,7 +184,7 @@ def test_shipment_tracking_advances_shipment_status(staff_client, motif, product
     assert order.shipment_status == ShipmentStatus.IN_TRANSIT
 
 
-def test_shipment_tracking_never_regresses_shipment_status(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_shipment_tracking_never_regresses_shipment_status(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(
         motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
         carrier_shipment_id='111', tracking_number='Z 111', shipment_status=ShipmentStatus.DELIVERED,
@@ -194,7 +194,7 @@ def test_shipment_tracking_never_regresses_shipment_status(staff_client, motif, 
     packeta_status = PacketStatus(status_code=2, code_text='arrived', status_text='Arrived at branch.')
 
     with patch('shipping.packeta_client.get_packet_status', return_value=packeta_status):
-        response = staff_client.get(f'/api/v1/admin/orders/{order.id}/shipment/status')
+        response = admin_client.get(f'/api/v1/admin/orders/{order.id}/shipment/status')
 
     assert response.status_code == 200
     assert response.data['shipment_status'] == ShipmentStatus.DELIVERED
@@ -202,14 +202,14 @@ def test_shipment_tracking_never_regresses_shipment_status(staff_client, motif, 
     assert order.shipment_status == ShipmentStatus.DELIVERED
 
 
-def test_reset_shipping_cost_endpoint_reverts_to_automatic(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_reset_shipping_cost_endpoint_reverts_to_automatic(admin_client, motif, product_type, cut, color, packeta_carrier):
     ShippingPrice.objects.create(carrier=packeta_carrier, delivery_type=DeliveryType.PICKUP_POINT, price=4200)
     order = _order(
         motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
         shipping_cost=999, shipping_cost_manual=True,
     )
 
-    response = staff_client.delete(f'/api/v1/admin/orders/{order.id}/shipping-cost')
+    response = admin_client.delete(f'/api/v1/admin/orders/{order.id}/shipping-cost')
 
     assert response.status_code == 200
     assert response.data['shipping_cost'] == 4200
@@ -219,52 +219,39 @@ def test_reset_shipping_cost_endpoint_reverts_to_automatic(staff_client, motif, 
     assert order.shipping_cost_manual is False
 
 
-def test_set_shipping_cost_endpoint_marks_manual(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_set_shipping_cost_endpoint_marks_manual(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
 
-    response = staff_client.put(f'/api/v1/admin/orders/{order.id}/shipping-cost', {'shippingCost': 777}, format='json')
+    response = admin_client.put(f'/api/v1/admin/orders/{order.id}/shipping-cost', {'shippingCost': 777}, format='json')
 
     assert response.status_code == 200
     assert response.data['shipping_cost'] == 777
     assert response.data['shipping_cost_manual'] is True
 
 
-def test_payment_status_endpoint_admin_can_mark_paid(motif, product_type, cut, color, packeta_carrier):
-    admin = User.objects.create_user(email='admin3@trikonos.cz', password='x', name='Admin', role=StaffRole.ADMIN)
-    client = APIClient()
-    client.force_authenticate(user=admin)
+def test_payment_status_endpoint_admin_can_mark_paid(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
 
-    response = client.patch(f'/api/v1/admin/orders/{order.id}/payment-status', {'paymentStatus': 'PAID'}, format='json')
+    response = admin_client.patch(f'/api/v1/admin/orders/{order.id}/payment-status', {'paymentStatus': 'PAID'}, format='json')
 
     assert response.status_code == 200
     assert response.data['payment_status'] == PaymentStatus.PAID
 
 
-def test_payment_status_endpoint_staff_cannot_mark_paid(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_payment_status_endpoint_rejects_invalid_transition(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
 
-    response = staff_client.patch(f'/api/v1/admin/orders/{order.id}/payment-status', {'paymentStatus': 'PAID'}, format='json')
-
-    assert response.status_code == 403
-    order.refresh_from_db()
-    assert order.payment_status == PaymentStatus.PENDING
-
-
-def test_payment_status_endpoint_rejects_invalid_transition(staff_client, motif, product_type, cut, color, packeta_carrier):
-    order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
-
-    response = staff_client.patch(f'/api/v1/admin/orders/{order.id}/payment-status', {'paymentStatus': 'REFUNDED'}, format='json')
+    response = admin_client.patch(f'/api/v1/admin/orders/{order.id}/payment-status', {'paymentStatus': 'REFUNDED'}, format='json')
 
     assert response.status_code == 409
 
 
-def test_shipment_status_endpoint_rejects_change_before_production(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_shipment_status_endpoint_rejects_change_before_production(admin_client, motif, product_type, cut, color, packeta_carrier):
     # Default _order() status is NEW - production hasn't started, so there's
     # nothing to ship yet.
     order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
 
-    response = staff_client.patch(
+    response = admin_client.patch(
         f'/api/v1/admin/orders/{order.id}/shipment-status', {'shipmentStatus': 'DELIVERED'}, format='json',
     )
 
@@ -274,13 +261,13 @@ def test_shipment_status_endpoint_rejects_change_before_production(staff_client,
     assert order.shipment_status == ShipmentStatus.CREATED
 
 
-def test_shipment_status_endpoint_allows_forward_move_in_production(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_shipment_status_endpoint_allows_forward_move_in_production(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(
         motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
         status=OrderStatus.PROCESSING, shipment_status=ShipmentStatus.LABEL_PRINTED,
     )
 
-    response = staff_client.patch(
+    response = admin_client.patch(
         f'/api/v1/admin/orders/{order.id}/shipment-status', {'shipmentStatus': 'HANDED_OVER'}, format='json',
     )
 
@@ -290,13 +277,13 @@ def test_shipment_status_endpoint_allows_forward_move_in_production(staff_client
     assert order.shipment_status == ShipmentStatus.HANDED_OVER
 
 
-def test_shipment_status_endpoint_rejects_backward_move(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_shipment_status_endpoint_rejects_backward_move(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(
         motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
         status=OrderStatus.SHIPPED, shipment_status=ShipmentStatus.IN_TRANSIT,
     )
 
-    response = staff_client.patch(
+    response = admin_client.patch(
         f'/api/v1/admin/orders/{order.id}/shipment-status', {'shipmentStatus': 'LABEL_PRINTED'}, format='json',
     )
 
@@ -305,26 +292,26 @@ def test_shipment_status_endpoint_rejects_backward_move(staff_client, motif, pro
     assert order.shipment_status == ShipmentStatus.IN_TRANSIT
 
 
-def test_shipment_status_endpoint_rejects_returned_before_handover(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_shipment_status_endpoint_rejects_returned_before_handover(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(
         motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
         status=OrderStatus.PROCESSING, shipment_status=ShipmentStatus.LABEL_PRINTED,
     )
 
-    response = staff_client.patch(
+    response = admin_client.patch(
         f'/api/v1/admin/orders/{order.id}/shipment-status', {'shipmentStatus': 'RETURNED'}, format='json',
     )
 
     assert response.status_code == 409
 
 
-def test_shipment_status_endpoint_allows_returned_after_handover(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_shipment_status_endpoint_allows_returned_after_handover(admin_client, motif, product_type, cut, color, packeta_carrier):
     order = _order(
         motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier,
         status=OrderStatus.SHIPPED, shipment_status=ShipmentStatus.IN_TRANSIT,
     )
 
-    response = staff_client.patch(
+    response = admin_client.patch(
         f'/api/v1/admin/orders/{order.id}/shipment-status', {'shipmentStatus': 'RETURNED'}, format='json',
     )
 
@@ -333,12 +320,12 @@ def test_shipment_status_endpoint_allows_returned_after_handover(staff_client, m
     assert order.shipment_status == ShipmentStatus.RETURNED
 
 
-def test_shipment_status_endpoint_can_correct_tracking_number_before_production(staff_client, motif, product_type, cut, color, packeta_carrier):
+def test_shipment_status_endpoint_can_correct_tracking_number_before_production(admin_client, motif, product_type, cut, color, packeta_carrier):
     # trackingNumber may be fixed any time, independent of the shipment
     # status gate above (e.g. a typo noticed before the order even ships).
     order = _order(motif=motif, product_type=product_type, cut=cut, color=color, packeta_carrier=packeta_carrier)
 
-    response = staff_client.patch(
+    response = admin_client.patch(
         f'/api/v1/admin/orders/{order.id}/shipment-status',
         {'shipmentStatus': 'CREATED', 'trackingNumber': 'Z 999'},
         format='json',

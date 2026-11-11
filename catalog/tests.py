@@ -8,7 +8,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from accounts.models import StaffRole, User
+from accounts.models import User
 from customers.models import Customer
 from orders.models import Order, OrderStatus
 from orders.services import build_order_item
@@ -20,15 +20,7 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def admin_client():
-    user = User.objects.create_user(email='admin@trikonos.cz', password='x', name='Admin', role=StaffRole.ADMIN)
-    client = APIClient()
-    client.force_authenticate(user=user)
-    return client
-
-
-@pytest.fixture
-def staff_client():
-    user = User.objects.create_user(email='staff@trikonos.cz', password='x', name='Staff', role=StaffRole.STAFF)
+    user = User.objects.create_user(email='admin@trikonos.cz', password='x', name='Admin')
     client = APIClient()
     client.force_authenticate(user=user)
     return client
@@ -63,14 +55,14 @@ def test_upload_image_creates_thumbnails_and_becomes_the_main_image(admin_client
     assert default_storage.exists(stored['thumbnail_large_path'])
 
 
-def test_staff_cannot_upload_image(staff_client, motif, settings, tmp_path):
+def test_unauthenticated_cannot_upload_image(motif, settings, tmp_path):
     settings.MEDIA_ROOT = tmp_path
 
-    response = staff_client.post(
+    response = APIClient().post(
         f'/api/v1/admin/motifs/{motif.id}/images', {'file': _fake_jpeg()}, format='multipart',
     )
 
-    assert response.status_code == 403
+    assert response.status_code in (401, 403)
 
 
 def test_upload_rejects_file_over_size_limit(admin_client, motif, monkeypatch, settings, tmp_path):

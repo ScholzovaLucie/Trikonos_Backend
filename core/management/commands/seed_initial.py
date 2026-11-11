@@ -5,7 +5,6 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils.text import slugify
 
-from accounts.models import StaffRole
 from catalog.models import Category, Color, Cut, Motif, PrintArea, ProductType
 from orders.models import DeliveryType
 from shipping.models import Carrier, ShippingPrice, ShippingQuantityDiscount
@@ -158,7 +157,7 @@ class Command(BaseCommand):
             return
 
         User.objects.create_superuser(
-            email=email.lower(), password=password, name=name, role=StaffRole.ADMIN,
+            email=email.lower(), password=password, name=name,
         )
         self.stdout.write(self.style.SUCCESS(f'Created admin user {email}.'))
 

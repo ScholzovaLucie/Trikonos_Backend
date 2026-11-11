@@ -1,7 +1,7 @@
 import pytest
 from rest_framework.test import APIClient
 
-from accounts.models import StaffRole, User
+from accounts.models import User
 from orders.models import DeliveryType
 
 from .models import Carrier, CodSurcharge, PacketaConfig, ShippingPrice, ShippingQuantityDiscount
@@ -11,15 +11,7 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def admin_client():
-    user = User.objects.create_user(email='admin@trikonos.cz', password='x', name='Admin', role=StaffRole.ADMIN)
-    client = APIClient()
-    client.force_authenticate(user=user)
-    return client
-
-
-@pytest.fixture
-def staff_client():
-    user = User.objects.create_user(email='staff@trikonos.cz', password='x', name='Staff', role=StaffRole.STAFF)
+    user = User.objects.create_user(email='admin@trikonos.cz', password='x', name='Admin')
     client = APIClient()
     client.force_authenticate(user=user)
     return client
@@ -34,15 +26,15 @@ def shipping_price(carrier):
 # Carriers
 # ---------------------------------------------------------------------------
 
-def test_staff_can_list_carriers(staff_client, carrier):
-    response = staff_client.get('/api/v1/admin/carriers')
+def test_can_list_carriers(admin_client, carrier):
+    response = admin_client.get('/api/v1/admin/carriers')
     assert response.status_code == 200
     assert len(response.data['results']) == 1
 
 
-def test_staff_cannot_create_carrier(staff_client):
-    response = staff_client.post('/api/v1/admin/carriers', {'name': 'DPD', 'code': 'dpd'}, format='json')
-    assert response.status_code == 403
+def test_unauthenticated_cannot_list_carriers():
+    response = APIClient().get('/api/v1/admin/carriers')
+    assert response.status_code in (401, 403)
 
 
 def test_admin_create_carrier_uppercases_code(admin_client):
@@ -100,27 +92,22 @@ def test_duplicate_shipping_price_for_same_pair_returns_400(admin_client, shippi
     assert response.status_code == 400
 
 
-def test_staff_can_read_but_not_write_shipping_prices(staff_client, shipping_price):
-    read = staff_client.get('/api/v1/admin/shipping-prices')
+def test_can_read_and_write_shipping_prices(admin_client, shipping_price):
+    read = admin_client.get('/api/v1/admin/shipping-prices')
     assert read.status_code == 200
 
-    write = staff_client.patch(f'/api/v1/admin/shipping-prices/{shipping_price.id}', {'price': 1000}, format='json')
-    assert write.status_code == 403
+    write = admin_client.patch(f'/api/v1/admin/shipping-prices/{shipping_price.id}', {'price': 1000}, format='json')
+    assert write.status_code == 200
 
 
 # ---------------------------------------------------------------------------
 # COD surcharge (singleton)
 # ---------------------------------------------------------------------------
 
-def test_staff_can_view_cod_surcharge(staff_client):
-    response = staff_client.get('/api/v1/admin/cod-surcharge')
+def test_can_view_cod_surcharge(admin_client):
+    response = admin_client.get('/api/v1/admin/cod-surcharge')
     assert response.status_code == 200
     assert response.data['amount'] == 0
-
-
-def test_staff_cannot_update_cod_surcharge(staff_client):
-    response = staff_client.put('/api/v1/admin/cod-surcharge', {'amount': 2900}, format='json')
-    assert response.status_code == 403
 
 
 def test_admin_can_update_cod_surcharge(admin_client):
@@ -131,12 +118,12 @@ def test_admin_can_update_cod_surcharge(admin_client):
 
 
 # ---------------------------------------------------------------------------
-# Packeta config (singleton, ADMIN-only for both read and write)
+# Packeta config (singleton, requires authentication for both read and write)
 # ---------------------------------------------------------------------------
 
-def test_staff_cannot_view_packeta_config(staff_client):
-    response = staff_client.get('/api/v1/admin/packeta-config')
-    assert response.status_code == 403
+def test_unauthenticated_cannot_view_packeta_config():
+    response = APIClient().get('/api/v1/admin/packeta-config')
+    assert response.status_code in (401, 403)
 
 
 def test_admin_can_set_packeta_config(admin_client):

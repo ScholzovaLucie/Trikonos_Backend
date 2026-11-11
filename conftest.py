@@ -28,7 +28,7 @@ def category(db):
 
 @pytest.fixture
 def product_type(db):
-    return ProductType.objects.create(name='Tričko')
+    return ProductType.objects.create(name='Tričko', price=500)
 
 
 @pytest.fixture

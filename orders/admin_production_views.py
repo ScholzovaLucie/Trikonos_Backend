@@ -4,7 +4,7 @@ from rest_framework import serializers
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.permissions import IsStaffOrAdmin
+from accounts.permissions import IsAdmin
 
 from .models import CustomDesignPlacement, OrderItem, OrderStatus
 
@@ -35,7 +35,7 @@ class ProductionPlacementRowSerializer(serializers.Serializer):
 
 class ProductionSummaryView(APIView):
     """Kolik kusů od každé kombinace typ/střih/barva/velikost vyrobit."""
-    permission_classes = [IsStaffOrAdmin]
+    permission_classes = [IsAdmin]
 
     @extend_schema(
         tags=['Admin - výroba'],
@@ -87,7 +87,7 @@ class ProductionSummaryView(APIView):
 
 class ProductionPlacementsView(APIView):
     """Seznam umístění vlastního potisku připravených k tisku."""
-    permission_classes = [IsStaffOrAdmin]
+    permission_classes = [IsAdmin]
 
     @extend_schema(
         tags=['Admin - výroba'],

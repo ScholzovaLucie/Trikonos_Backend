@@ -10,7 +10,6 @@ from django.db import connection, transaction
 from django.utils import timezone
 from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy
-from rest_framework import exceptions as drf_exceptions
 
 from core.exceptions import (
     BusinessError,
@@ -165,10 +164,11 @@ def _validate_and_price_item(item_data):
 
     # Admin manual order creation may pass an explicit unit_price (e.g. to
     # pre-fill a quote); public checkout never sets this key, so it falls
-    # back to the catalog price (or None for a custom item awaiting a quote).
+    # back to motif price + the product type's own surcharge (or None for a
+    # custom item awaiting a quote).
     unit_price = item_data.get('unit_price')
     if unit_price is None:
-        unit_price = motif.price if not is_custom else None
+        unit_price = motif.price + product_type.price if not is_custom else None
     item_label = build_item_label(is_custom, motif, product_type, cut, color, size)
     return item_label, unit_price
 
@@ -428,7 +428,6 @@ def confirm_order(order):
 class StatusTransition:
     source: str
     target: str
-    admin_only: bool = False
     condition: Optional[Callable] = None
     condition_message: str = ''
 
@@ -471,12 +470,12 @@ TRANSITIONS = [
         OrderStatus.PROCESSING, OrderStatus.SHIPPED,
         condition=_carrier_and_delivery_set, condition_message=gettext_lazy('A carrier and delivery type must be set.'),
     ),
-    StatusTransition(OrderStatus.PROCESSING, OrderStatus.CANCELLED, admin_only=True),
+    StatusTransition(OrderStatus.PROCESSING, OrderStatus.CANCELLED),
     StatusTransition(OrderStatus.SHIPPED, OrderStatus.DELIVERED),
-    StatusTransition(OrderStatus.PAID, OrderStatus.REFUNDED, admin_only=True),
-    StatusTransition(OrderStatus.PROCESSING, OrderStatus.REFUNDED, admin_only=True),
-    StatusTransition(OrderStatus.SHIPPED, OrderStatus.REFUNDED, admin_only=True),
-    StatusTransition(OrderStatus.DELIVERED, OrderStatus.REFUNDED, admin_only=True),
+    StatusTransition(OrderStatus.PAID, OrderStatus.REFUNDED),
+    StatusTransition(OrderStatus.PROCESSING, OrderStatus.REFUNDED),
+    StatusTransition(OrderStatus.SHIPPED, OrderStatus.REFUNDED),
+    StatusTransition(OrderStatus.DELIVERED, OrderStatus.REFUNDED),
 ]
 
 _TRANSITIONS_BY_PAIR = {(t.source, t.target): t for t in TRANSITIONS}
@@ -498,15 +497,13 @@ def _shipment_status_rank(value):
         return -1
 
 
-def get_allowed_transitions(order, *, is_admin):
-    """Target statuses reachable from the order's current status for this
-    actor - drives the `allowedTransitions` field in the admin order detail.
+def get_allowed_transitions(order):
+    """Target statuses reachable from the order's current status - drives
+    the `allowedTransitions` field in the admin order detail.
     """
     targets = []
     for transition in TRANSITIONS:
         if transition.source != order.status:
-            continue
-        if transition.admin_only and not is_admin:
             continue
         if transition.condition and not transition.condition(order):
             continue
@@ -514,15 +511,13 @@ def get_allowed_transitions(order, *, is_admin):
     return targets
 
 
-def transition_order_status(order, target_status, *, is_admin):
+def transition_order_status(order, target_status):
     transition = _TRANSITIONS_BY_PAIR.get((order.status, target_status))
     if transition is None:
         raise InvalidStatusTransitionError(
             _('Transition from status %(source)s to %(target)s is not allowed.')
             % {'source': order.status, 'target': target_status}
         )
-    if transition.admin_only and not is_admin:
-        raise drf_exceptions.PermissionDenied(_('Only the ADMIN role may perform this action.'))
     if transition.condition and not transition.condition(order):
         raise InvalidStatusTransitionError(transition.condition_message or _('The transition condition was not met.'))
 
@@ -556,7 +551,7 @@ def transition_order_status(order, target_status, *, is_admin):
 # ---------------------------------------------------------------------------
 # Payment status - independent of order status (e.g. admin manually
 # confirming an incoming bank transfer), but still constrained to
-# meaningful transitions and roles so it can't drift out of sync.
+# meaningful transitions so it can't drift out of sync.
 # ---------------------------------------------------------------------------
 
 _PAYMENT_STATUS_TRANSITIONS = {
@@ -566,13 +561,9 @@ _PAYMENT_STATUS_TRANSITIONS = {
     (PaymentStatus.FAILED, PaymentStatus.PAID),
     (PaymentStatus.PAID, PaymentStatus.REFUNDED),
 }
-# Marking something as actually paid or reversing a payment are the two
-# mistakes with real money consequences - same ADMIN-only bar as REFUNDED
-# on the order status machine above.
-_PAYMENT_STATUS_ADMIN_ONLY_TARGETS = {PaymentStatus.PAID, PaymentStatus.REFUNDED}
 
 
-def transition_payment_status(order, target_status, *, is_admin):
+def transition_payment_status(order, target_status):
     if order.status in (OrderStatus.CANCELLED, OrderStatus.REFUNDED):
         raise InvalidStatusTransitionError(
             _('Payment status cannot change on a cancelled or refunded order.'),
@@ -582,8 +573,6 @@ def transition_payment_status(order, target_status, *, is_admin):
             _('Transition from payment status %(source)s to %(target)s is not allowed.')
             % {'source': order.payment_status, 'target': target_status}
         )
-    if target_status in _PAYMENT_STATUS_ADMIN_ONLY_TARGETS and not is_admin:
-        raise drf_exceptions.PermissionDenied(_('Only the ADMIN role may perform this action.'))
     if target_status == PaymentStatus.PAID and order.total is None:
         raise BusinessError(_('The order does not have a total price set.'), code='ORDER_NOT_PRICED')
 
@@ -595,9 +584,7 @@ def transition_payment_status(order, target_status, *, is_admin):
 # ---------------------------------------------------------------------------
 # Shipment status - forward-only (chapter 6 of the API guide), and only
 # once the order is actually being produced/shipped - a brand new or
-# not-yet-confirmed order has nothing to ship yet. No role restriction:
-# unlike payment status, marking a shipment handed over/delivered has no
-# money consequences, so any STAFF member handles it day to day.
+# not-yet-confirmed order has nothing to ship yet.
 # ---------------------------------------------------------------------------
 
 _SHIPMENT_STATUS_EDITABLE_ORDER_STATUSES = {OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED}

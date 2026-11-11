@@ -54,7 +54,7 @@ class AdminProductTypeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ProductType
-        fields = ['id', 'name', 'position', 'is_active', 'print_areas']
+        fields = ['id', 'name', 'price', 'position', 'is_active', 'print_areas']
 
 
 class AdminPrintAreaSerializer(serializers.ModelSerializer):

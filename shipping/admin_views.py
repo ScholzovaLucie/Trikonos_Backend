@@ -2,7 +2,7 @@ from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import viewsets
 from rest_framework.response import Response
 
-from accounts.permissions import IsAdmin, IsStaffOrAdmin
+from accounts.permissions import IsAdmin
 from core.admin_lookup import LookupAdminViewSet, lookup_schema_view
 
 from .admin_serializers import (
@@ -77,18 +77,14 @@ class AdminShippingPriceViewSet(LookupAdminViewSet):
     update=extend_schema(
         tags=['Admin - doprava'],
         summary='Nastavit příplatek za dobírku',
-        description='Jen role ADMIN.',
+        description='Vyžaduje přihlášení do administrace.',
         request=AdminCodSurchargeSerializer,
         responses={200: AdminCodSurchargeSerializer},
     ),
 )
 class AdminCodSurchargeView(viewsets.ViewSet):
     """GET/PUT /admin/cod-surcharge - singleton příplatek za dobírku."""
-
-    def get_permissions(self):
-        if self.request.method == 'GET':
-            return [IsStaffOrAdmin()]
-        return [IsAdmin()]
+    permission_classes = [IsAdmin]
 
     def list(self, request):
         serializer = AdminCodSurchargeSerializer(CodSurcharge.get_solo())
@@ -108,8 +104,8 @@ class AdminCodSurchargeView(viewsets.ViewSet):
         summary='Zobrazit nastavení Packety',
         description=(
             'Přihlašovací údaje a nastavení pro napojení na Packeta '
-            '(Zásilkovna) API (viz `shipping/packeta_client.py`) - jen role '
-            'ADMIN, jsou to citlivé údaje. `apiPassword: ""` znamená, že '
+            '(Zásilkovna) API (viz `shipping/packeta_client.py`) - jsou to '
+            'citlivé údaje. `apiPassword: ""` znamená, že '
             'integrace ještě není nastavená - vytvoření zásilky pak selže '
             's jasnou chybou. `homeDeliveryAddressId` je ID externího '
             'dopravce pro doručení na adresu (ne ID výdejního místa) - '
@@ -121,7 +117,7 @@ class AdminCodSurchargeView(viewsets.ViewSet):
     update=extend_schema(
         tags=['Admin - doprava'],
         summary='Nastavit napojení na Packetu',
-        description='Jen role ADMIN.',
+        description='Vyžaduje přihlášení do administrace.',
         request=AdminPacketaConfigSerializer,
         responses={200: AdminPacketaConfigSerializer},
     ),

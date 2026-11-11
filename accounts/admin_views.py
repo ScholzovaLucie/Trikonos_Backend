@@ -12,32 +12,32 @@ from core.pagination import AdminPagination
 
 from .admin_serializers import AdminUserCreateSerializer, AdminUserSerializer, AdminUserUpdateSerializer
 from .emails import send_password_setup_email
-from .models import StaffRole, User
+from .models import User
 from .permissions import IsAdmin
 
 _TAG = ['Admin - uživatelé']
 
 
-def _has_other_active_admin(exclude):
-    return User.objects.filter(role=StaffRole.ADMIN, is_active=True).exclude(pk=exclude.pk).exists()
+def _has_other_active_user(exclude):
+    return User.objects.filter(is_active=True).exclude(pk=exclude.pk).exists()
 
 
 @extend_schema_view(
     list=extend_schema(
         tags=_TAG,
         summary='Seznam uživatelů administrace',
-        description='Jen role ADMIN. Všichni uživatelé administrace (role ADMIN i STAFF), bez stránkování navíc k výchozímu.',
+        description='Všichni uživatelé administrace, bez stránkování navíc k výchozímu.',
     ),
     retrieve=extend_schema(
         tags=_TAG,
         summary='Detail uživatele administrace',
-        description='Jen role ADMIN.',
+        description='Detail jednoho uživatele administrace.',
     ),
     create=extend_schema(
         tags=_TAG,
         summary='Založit uživatele administrace',
         description=(
-            'Jen role ADMIN. Pole `password` je nepovinné: pokud ho vynecháš, '
+            'Pole `password` je nepovinné: pokud ho vynecháš, '
             'novému uživateli se nastaví nepoužitelné heslo (nemůže se přihlásit '
             'heslem, dokud ho nenastaví) a pošle se mu e-mail s odkazem na '
             'nastavení hesla - stejný mechanismus jako "Zapomenuté heslo". Pokud '
@@ -49,9 +49,9 @@ def _has_other_active_admin(exclude):
         tags=_TAG,
         summary='Upravit uživatele administrace',
         description=(
-            'Jen role ADMIN. Lze měnit `name`, `role`, `isActive`. Pojistka: '
-            'pokud by změna (odebrání role ADMIN nebo deaktivace) znamenala, že '
-            'nezůstane žádný jiný aktivní ADMIN, vrátí 409 `LAST_ADMIN` a změna '
+            'Lze měnit `name`, `isActive`. Pojistka: '
+            'pokud by deaktivace znamenala, že '
+            'nezůstane žádný jiný aktivní uživatel administrace, vrátí 409 `LAST_ADMIN` a změna '
             'se neprovede.'
         ),
     ),
@@ -59,14 +59,14 @@ def _has_other_active_admin(exclude):
         tags=_TAG,
         summary='Smazat uživatele administrace',
         description=(
-            'Jen role ADMIN. Dvě pojistky: nejde smazat **sebe sama** (403) a '
-            'nejde smazat **posledního aktivního admina** (409 `LAST_ADMIN`) - '
+            'Dvě pojistky: nejde smazat **sebe sama** (403) a '
+            'nejde smazat **posledního aktivního uživatele** (409 `LAST_ADMIN`) - '
             'systém by jinak zůstal bez nikoho, kdo může správu uživatelů ovládat.'
         ),
     ),
 )
 class AdminUserViewSet(viewsets.ModelViewSet):
-    """Uživatelé administrace (role ADMIN/STAFF) - interní účty, ne zákazníci."""
+    """Uživatelé administrace - interní účty, ne zákazníci."""
     queryset = User.objects.all().order_by('email')
     permission_classes = [IsAdmin]
     pagination_class = AdminPagination
@@ -86,7 +86,7 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         data = serializer.validated_data
 
         password = data.get('password')
-        user = User(email=data['email'], name=data['name'], role=data['role'])
+        user = User(email=data['email'], name=data['name'])
         if password:
             user.set_password(password)
         else:
@@ -106,12 +106,11 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        demoting = 'role' in data and data['role'] != StaffRole.ADMIN and user.role == StaffRole.ADMIN
-        deactivating = 'is_active' in data and data['is_active'] is False and user.role == StaffRole.ADMIN
-        if (demoting or deactivating) and not _has_other_active_admin(exclude=user):
+        deactivating = 'is_active' in data and data['is_active'] is False
+        if deactivating and not _has_other_active_user(exclude=user):
             raise LastAdminError()
 
-        for field in ('name', 'role', 'is_active'):
+        for field in ('name', 'is_active'):
             if field in data:
                 setattr(user, field, data[field])
         user.save()
@@ -121,6 +120,6 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         user = self.get_object()
         if user.pk == request.user.pk:
             raise PermissionDenied(_('You cannot delete your own account.'))
-        if user.role == StaffRole.ADMIN and not _has_other_active_admin(exclude=user):
+        if not _has_other_active_user(exclude=user):
             raise LastAdminError()
         return super().destroy(request, *args, **kwargs)

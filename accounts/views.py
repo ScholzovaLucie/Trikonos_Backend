@@ -58,9 +58,8 @@ class LoginView(APIView):
         summary='Přihlásit administrátora/staffa',
         description=(
             'Přihlášení e-mailem a heslem. Při úspěchu založí session (cookie '
-            '`sessionid`, httpOnly) a vrátí profil přihlášeného uživatele - podle '
-            '`role` v odpovědi frontend skrývá/zobrazuje části administrace (viz '
-            'tabulka oprávnění ADMIN/STAFF). Nesprávný e-mail i nesprávné heslo vrací '
+            '`sessionid`, httpOnly) a vrátí profil přihlášeného uživatele. '
+            'Nesprávný e-mail i nesprávné heslo vrací '
             'stejnou chybu 401, aby se nedalo zjistit, jestli účet s daným e-mailem '
             'vůbec existuje. Limit 5 pokusů/min na IP (`ScopedRateThrottle`) - při '
             'překročení 429. Před tímto voláním musí proběhnout `GET /auth/csrf`.'
@@ -122,10 +121,9 @@ class MeView(APIView):
         tags=_TAG,
         summary='Kdo je přihlášený',
         description=(
-            'Vrátí `id`, `email`, `name` a `role` aktuálně přihlášeného uživatele. '
+            'Vrátí `id`, `email` a `name` aktuálně přihlášeného uživatele. '
             'Frontend si tím po načtení stránky (nebo po refreshi) ověří, že session '
-            'je stále platná, a podle `role` rozhodne, co v administraci zobrazit - '
-            'STAFF nevidí správu uživatelů ani možnost REFUNDED/zrušení ve výrobě.'
+            'je stále platná.'
         ),
         responses={200: MeSerializer},
     )

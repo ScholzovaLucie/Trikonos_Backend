@@ -59,6 +59,7 @@ class CatalogOptionPrintAreaSerializer(serializers.Serializer):
 class CatalogOptionProductTypeSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     name = serializers.CharField()
+    price = serializers.IntegerField()
     print_areas = CatalogOptionPrintAreaSerializer(many=True)
 
 

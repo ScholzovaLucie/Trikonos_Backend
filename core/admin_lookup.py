@@ -9,7 +9,7 @@ from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from accounts.permissions import IsAdmin, IsStaffOrAdmin
+from accounts.permissions import IsAdmin
 from core.exceptions import InUseError
 from core.pagination import AdminPagination
 
@@ -35,7 +35,7 @@ def lookup_schema_view(entity, entity_plural, extra_note='', tag='Admin - číse
             description=(
                 f'Vrátí VŠECHNY {entity_plural} včetně neaktivních (na rozdíl od '
                 'veřejného API, kde se neaktivní nikdy neukážou). Filtr `isActive` '
-                '(true/false) a fulltext `q` v názvu. Čtení smí ADMIN i STAFF.'
+                '(true/false) a fulltext `q` v názvu.'
             ),
         ),
         retrieve=extend_schema(
@@ -46,18 +46,18 @@ def lookup_schema_view(entity, entity_plural, extra_note='', tag='Admin - číse
         create=extend_schema(
             tags=[tag],
             summary=f'Vytvořit {entity}',
-            description=f'Jen role ADMIN.{note_suffix}',
+            description=f'Vyžaduje přihlášení do administrace.{note_suffix}',
         ),
         partial_update=extend_schema(
             tags=[tag],
             summary=f'Upravit {entity}',
-            description=f'Jen role ADMIN. Částečná úprava (PATCH) - pošli jen pole, která měníš.{note_suffix}',
+            description=f'Částečná úprava (PATCH) - pošli jen pole, která měníš.{note_suffix}',
         ),
         destroy=extend_schema(
             tags=[tag],
             summary=f'Smazat {entity}',
             description=(
-                f'Jen role ADMIN. Pokud je {entity} použitý v objednávce nebo motivu '
+                f'Pokud je {entity} použitý v objednávce nebo motivu '
                 '(DB vazba `PROTECT`), vrátí 409 `IN_USE` - použij `isActive: false` '
                 'místo mazání.'
             ),
@@ -83,10 +83,7 @@ class LookupAdminViewSet(viewsets.ModelViewSet):
     filter_backends = []
     search_fields = ['name']
 
-    def get_permissions(self):
-        if self.action in ('list', 'retrieve'):
-            return [IsStaffOrAdmin()]
-        return [IsAdmin()]
+    permission_classes = [IsAdmin]
 
     def get_queryset(self):
         queryset = super().get_queryset()

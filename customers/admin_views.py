@@ -2,15 +2,12 @@ import csv
 
 from django.db.models import Count, Max, Q, Sum
 from django.http import HttpResponse
-from django.utils.translation import gettext as _
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema, extend_schema_view
-from rest_framework import exceptions as drf_exceptions
 from rest_framework import viewsets
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.models import StaffRole
-from accounts.permissions import IsAdmin, IsStaffOrAdmin
+from accounts.permissions import IsAdmin
 from core.exceptions import EmailTakenError
 from core.pagination import AdminPagination
 
@@ -63,16 +60,15 @@ _TAG = ['Admin - zákazníci']
         summary='Upravit zákazníka',
         description=(
             'Částečná úprava (PATCH): `phone`, `firstName`, `lastName`, '
-            '`companyName`, `marketingConsent`, `note` smí ADMIN i STAFF. Změna '
-            '`email` je navíc **jen pro ADMIN** (jinak 403) a kontroluje '
-            'unikátnost - pokud už e-mail patří jinému zákazníkovi, vrátí 409 '
-            '`EMAIL_TAKEN`.'
+            '`companyName`, `marketingConsent`, `note`, `email`. Změna `email` '
+            'kontroluje unikátnost - pokud už e-mail patří jinému zákazníkovi, '
+            'vrátí 409 `EMAIL_TAKEN`.'
         ),
     ),
 )
 class AdminCustomerViewSet(viewsets.ModelViewSet):
     """Zákazníci - evidence pro administraci, bez hesla/účtu."""
-    permission_classes = [IsStaffOrAdmin]
+    permission_classes = [IsAdmin]
     pagination_class = AdminPagination
     http_method_names = ['get', 'patch', 'head', 'options']
     filter_backends = []
@@ -114,8 +110,6 @@ class AdminCustomerViewSet(viewsets.ModelViewSet):
         data = serializer.validated_data
 
         if 'email' in data:
-            if request.user.role != StaffRole.ADMIN:
-                raise drf_exceptions.PermissionDenied(_('Only the ADMIN role may change the e-mail address.'))
             new_email = data['email'].strip().lower()
             if Customer.objects.exclude(pk=customer.pk).filter(email__iexact=new_email).exists():
                 raise EmailTakenError()
@@ -138,7 +132,7 @@ class CustomerExportConsentsView(APIView):
         tags=_TAG,
         summary='Export e-mailů se souhlasem s marketingem (CSV)',
         description=(
-            'Jen role ADMIN. Vrátí CSV soubor (ne JSON) s jedním sloupcem `email` - '
+            'Vrátí CSV soubor (ne JSON) s jedním sloupcem `email` - '
             'jen zákazníci s `marketingConsent: true`. Odpověď má '
             '`Content-Disposition: attachment`, takže prohlížeč nabídne stažení '
             'souboru `marketing-consents.csv` místo zobrazení obsahu.'

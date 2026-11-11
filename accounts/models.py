@@ -5,11 +5,6 @@ from django.db import models
 from core.models import UUIDModel
 
 
-class StaffRole(models.TextChoices):
-    ADMIN = 'ADMIN', 'Admin'
-    STAFF = 'STAFF', 'Staff'
-
-
 class UserManager(BaseUserManager):
     use_in_migrations = True
 
@@ -30,7 +25,6 @@ class UserManager(BaseUserManager):
     def create_superuser(self, email, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
-        extra_fields.setdefault('role', StaffRole.ADMIN)
         if extra_fields.get('is_staff') is not True:
             raise ValueError('Superuser must have is_staff=True.')
         if extra_fields.get('is_superuser') is not True:
@@ -45,7 +39,6 @@ class User(AbstractUser, UUIDModel):
     username = None
     email = models.EmailField(unique=True)
     name = models.CharField(max_length=255)
-    role = models.CharField(max_length=10, choices=StaffRole.choices, default=StaffRole.STAFF)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

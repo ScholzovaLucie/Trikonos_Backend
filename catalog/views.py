@@ -188,6 +188,8 @@ class CatalogOptionsView(APIView):
             'Jediné volání, které konfigurátor/editor vlastního potisku/checkout '
             'potřebuje k vykreslení výběru typu oblečení, střihu, barvy, velikosti a '
             'dopravce - místo volání 5 různých endpointů zvlášť. `productTypes` má '
+            '`price` (příplatek za typ oblečení, připočítaný k `motif.price` - '
+            'výsledná cena položky je `motif.price + productType.price`) a '
             'zanořené `printAreas` (`widthMm`/`heightMm` v milimetrech - používej pro '
             'rozměry editoru vlastního potisku i validaci umístění na frontendu, i '
             'když finální kontrolu stejně dělá server). `sizes` je pevný seznam '
@@ -212,6 +214,7 @@ class CatalogOptionsView(APIView):
                 {
                     'id': product_type.id,
                     'name': product_type.name,
+                    'price': product_type.price,
                     'print_areas': [
                         {
                             'id': area.id,

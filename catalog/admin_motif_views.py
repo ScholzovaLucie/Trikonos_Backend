@@ -11,7 +11,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 
-from accounts.permissions import IsAdmin, IsStaffOrAdmin
+from accounts.permissions import IsAdmin
 from core.admin_lookup import ReorderSerializer
 from core.exceptions import InUseError
 from core.pagination import AdminPagination
@@ -54,7 +54,7 @@ def _make_thumbnail(pil_image, max_dimension, extension):
             '(fulltext v názvu). Řazení `ordering`: `position` (výchozí), '
             '`-createdAt`, `name`. Řádek obsahuje `ordersCount` (v kolika '
             'objednávkách se motiv objevil - orientační, pro rychlý přehled '
-            'popularity v administraci). Čtení smí ADMIN i STAFF.'
+            'popularity v administraci).'
         ),
     ),
     retrieve=extend_schema(
@@ -66,7 +66,7 @@ def _make_thumbnail(pil_image, max_dimension, extension):
         tags=_TAG,
         summary='Vytvořit motiv',
         description=(
-            'Jen role ADMIN. `slug` je nepovinný - když chybí, vygeneruje se z '
+            '`slug` je nepovinný - když chybí, vygeneruje se z '
             '`name` (musí vyjít unikátní, jinak 400). Nový motiv vznikne bez '
             'obrázků - ty se nahrávají až následně přes `POST /motifs/{id}/images`.'
         ),
@@ -75,7 +75,7 @@ def _make_thumbnail(pil_image, max_dimension, extension):
         tags=_TAG,
         summary='Upravit motiv',
         description=(
-            'Jen role ADMIN. Částečná úprava (PATCH). **Důležité:** změna `price` '
+            'Částečná úprava (PATCH). **Důležité:** změna `price` '
             'nijak neovlivní ceny v už existujících objednávkách - cena je v '
             '`order_items.unit_price` uložená jako snapshot v okamžiku objednání, '
             'ne odkaz na aktuální cenu motivu.'
@@ -87,11 +87,7 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
     pagination_class = AdminPagination
     http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
     filter_backends = []
-
-    def get_permissions(self):
-        if self.action in ('list', 'retrieve'):
-            return [IsStaffOrAdmin()]
-        return [IsAdmin()]
+    permission_classes = [IsAdmin]
 
     def get_queryset(self):
         queryset = Motif.objects.select_related('category').annotate(
@@ -140,7 +136,7 @@ class AdminMotifViewSet(viewsets.ModelViewSet):
         tags=_TAG,
         summary='Smazat motiv',
         description=(
-            'Jen role ADMIN. Pokud je motiv použitý v jakékoli objednávce, vrátí '
+            'Pokud je motiv použitý v jakékoli objednávce, vrátí '
             '409 `IN_USE` - použij `isActive: false` místo mazání. Když mazání '
             'projde, smažou se i všechny soubory fotek (originály i miniatury) z '
             'úložiště, ne jen záznam z `images` JSON.'

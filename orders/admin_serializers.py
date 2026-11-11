@@ -4,7 +4,6 @@ from django.utils.translation import gettext as _
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from accounts.models import StaffRole
 from catalog.models import Color, Cut, Motif, PrintArea, ProductType
 from customers.models import Customer
 from shipping.models import Carrier
@@ -147,9 +146,7 @@ class AdminOrderDetailSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_allowed_transitions(self, obj):
-        request = self.context.get('request')
-        is_admin_role = bool(request and request.user.role == StaffRole.ADMIN)
-        return services.get_allowed_transitions(obj, is_admin=is_admin_role)
+        return services.get_allowed_transitions(obj)
 
     def get_is_locked(self, obj) -> bool:
         return obj.status not in services.EDITABLE_STATUSES
