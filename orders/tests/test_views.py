@@ -40,7 +40,7 @@ def test_cart_validate_with_configured_delivery_returns_shipping_cost(motif, pro
 
     assert response.status_code == 200
     assert response.data['shipping_cost'] == 5000
-    assert response.data['total'] == motif.price + 5000
+    assert response.data['total'] == motif.price + product_type.price + 5000
 
 
 def test_cart_validate_personal_pickup_is_free_without_carrier(motif, product_type, cut, color):
@@ -51,4 +51,4 @@ def test_cart_validate_personal_pickup_is_free_without_carrier(motif, product_ty
 
     assert response.status_code == 200
     assert response.data['shipping_cost'] == 0
-    assert response.data['total'] == motif.price
+    assert response.data['total'] == motif.price + product_type.price

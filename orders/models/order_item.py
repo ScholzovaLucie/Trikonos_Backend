@@ -11,7 +11,7 @@ class OrderItem(UUIDModel):
     """One ordered line (one shirt/hoodie/accessory). Exactly one of two
     paths per item, never mixed:
       - is_custom=False -> motif (always exactly one) from the catalog,
-        price = motif.price
+        price = motif.price + product_type.price
       - is_custom=True  -> custom_text + CustomDesignPlacement rows (several
         placements possible), price always set manually by admin
     """
