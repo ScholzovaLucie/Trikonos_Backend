@@ -4,6 +4,7 @@ from .color import Color
 from .cut import Cut
 from .product_type import ProductType
 from .print_area import PrintArea
+from .motif_variant import MotifVariant
 
 __all__ = [
     'Category',
@@ -12,4 +13,5 @@ __all__ = [
     'Cut',
     'ProductType',
     'PrintArea',
+    'MotifVariant',
 ]

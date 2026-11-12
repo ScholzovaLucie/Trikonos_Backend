@@ -87,7 +87,11 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
             'cenu a **všechny** obrázky motivu (ne jen hlavní) - každý obrázek má '
             '`colorId`; frontend podle vybrané barvy ve `/catalog/options` přepne '
             'galerii na obrázky s odpovídajícím `colorId` (nebo ukáže výchozí, pokud '
-            'žádný obrázek tu barvu nemá). Vyhledává podle `slug`.'
+            'žádný obrázek tu barvu nemá). `variants` je seznam povolených kombinací '
+            '`productTypeId`/`cutId`/`colorId`/`size` pro tento motiv - konfigurátor '
+            'z nich nabídne jen ty, co admin opravdu povolil v `/admin/motif-variants` '
+            '(jiná kombinace by u `/cart/validate`/`POST /orders` skončila 422 '
+            '`VARIANT_NOT_AVAILABLE`). Vyhledává podle `slug`.'
         ),
     ),
 )

@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import Category, Motif
@@ -37,16 +38,33 @@ class MotifListSerializer(serializers.ModelSerializer):
         return images[0]['url'] if images else None
 
 
+class MotifVariantRefSerializer(serializers.Serializer):
+    product_type_id = serializers.UUIDField()
+    cut_id = serializers.UUIDField()
+    color_id = serializers.UUIDField()
+    size = serializers.CharField()
+
+
 class MotifDetailSerializer(serializers.ModelSerializer):
     category = MotifCategoryRefSerializer(read_only=True)
     currency = serializers.SerializerMethodField()
+    variants = serializers.SerializerMethodField()
 
     class Meta:
         model = Motif
-        fields = ['id', 'slug', 'name', 'description', 'price', 'currency', 'images', 'category']
+        fields = ['id', 'slug', 'name', 'description', 'price', 'currency', 'images', 'category', 'variants']
 
     def get_currency(self, obj) -> str:
         return 'CZK'
+
+    @extend_schema_field(MotifVariantRefSerializer(many=True))
+    def get_variants(self, obj):
+        """Which productType/cut/color/size combinations are orderable for
+        this motif - admin opts them in via /admin/motif-variants. The
+        configurator uses this to show only buyable combinations instead of
+        letting the customer pick one that /cart/validate will then reject.
+        """
+        return MotifVariantRefSerializer(obj.variants.filter(is_active=True), many=True).data
 
 
 class CatalogOptionPrintAreaSerializer(serializers.Serializer):

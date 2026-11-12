@@ -1,6 +1,6 @@
 import pytest
 
-from catalog.models import PrintArea, ProductType
+from catalog.models import MotifVariant, PrintArea, ProductType
 from core.exceptions import BusinessError, InvalidStatusTransitionError, OrderLockedError, ShippingPriceNotConfigured
 from customers.models import Customer
 from orders import services
@@ -139,6 +139,44 @@ def test_placement_out_of_bounds_is_rejected(product_type, cut, color, print_are
 
     with pytest.raises(BusinessError):
         _make_order(items)
+
+
+def test_unlisted_combination_is_rejected(motif, product_type, cut, color):
+    # The `motif` fixture only registers a MotifVariant for size M.
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'XL', 'quantity': 1, 'placements': [],
+    }]
+
+    with pytest.raises(BusinessError) as exc_info:
+        _make_order(items)
+    assert exc_info.value.code == 'VARIANT_NOT_AVAILABLE'
+
+
+def test_newly_listed_combination_is_accepted(motif, product_type, cut, color):
+    MotifVariant.objects.create(motif=motif, product_type=product_type, cut=cut, color=color, size='XL')
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'XL', 'quantity': 1, 'placements': [],
+    }]
+
+    order = _make_order(items)
+
+    assert order.status == OrderStatus.NEW
+
+
+def test_deactivated_variant_combination_is_rejected(motif, product_type, cut, color):
+    MotifVariant.objects.filter(motif=motif, product_type=product_type, cut=cut, color=color, size='M').update(
+        is_active=False,
+    )
+    items = [{
+        'is_custom': False, 'motif': motif, 'custom_text': '', 'product_type': product_type,
+        'cut': cut, 'color': color, 'size': 'M', 'quantity': 1, 'placements': [],
+    }]
+
+    with pytest.raises(BusinessError) as exc_info:
+        _make_order(items)
+    assert exc_info.value.code == 'VARIANT_NOT_AVAILABLE'
 
 
 def test_inactive_motif_is_rejected(motif, product_type, cut, color):

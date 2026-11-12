@@ -1,7 +1,7 @@
 import pytest
 from django.core.cache import cache
 
-from catalog.models import Category, Color, Cut, PrintArea, ProductType, Motif
+from catalog.models import Category, Color, Cut, MotifVariant, PrintArea, ProductType, Motif
 from shipping.models import Carrier
 
 
@@ -47,5 +47,11 @@ def color(db):
 
 
 @pytest.fixture
-def motif(db, category):
-    return Motif.objects.create(name='Bitcoin', slug='bitcoin', price=59900, category=category)
+def motif(db, category, product_type, cut, color):
+    motif = Motif.objects.create(name='Bitcoin', slug='bitcoin', price=59900, category=category)
+    # Every existing test that builds a catalog order item combines this
+    # motif with the product_type/cut/color fixtures at size M - without a
+    # matching MotifVariant row, orders.services._validate_and_price_item
+    # would now reject that combination with 422 VARIANT_NOT_AVAILABLE.
+    MotifVariant.objects.create(motif=motif, product_type=product_type, cut=cut, color=color, size='M')
+    return motif

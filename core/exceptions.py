@@ -93,6 +93,12 @@ class DuplicateQuantityDiscountError(BusinessError):
     default_detail = _('A quantity discount with this minimum quantity already exists for this shipping price.')
 
 
+class DuplicateVariantError(BusinessError):
+    status_code = 409
+    default_code = 'DUPLICATE_VARIANT'
+    default_detail = _('This combination is already registered for this motif.')
+
+
 # Fallback mapping for DRF/Django exceptions that don't carry our own `.code`
 # attribute, checked via isinstance (ordered dict - first match wins).
 _CODE_BY_EXCEPTION_TYPE = {
